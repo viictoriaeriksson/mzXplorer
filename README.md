@@ -1,7 +1,7 @@
 # mzXplorer
 
 <!-- badges: start -->
-<img src="figures/mzXplorer_logo.png" align="right" height="250px" />
+<img src="mzXplorer_logo.png" align="right" height="250px" />
 
 <!-- badges: end -->
 
