@@ -19,7 +19,7 @@ It is designed for LC/GC‑HRMS, DI/FIA, DIA, and **IM‑MS** workflows.
 
 ### 1.1 Required columns
 
-mzXplorer accepts a single **CSV (.csv) or Excel (.xlxs)** feature file with at least:
+mzXplorer accepts a single **CSV (.csv) or Excel (.xlsx / .xls)** feature file with at least:
 
 | Column      | Description                 |
 |-------------|-----------------------------|
@@ -59,7 +59,7 @@ comparing samples.
 
 ### 2.1 Workflow
 
-1.  **Upload CSV** → confirm column mapping.
+1.  **Upload feature list file** → confirm column mapping.
 2.  **Mass Defect formulas** → enter one to **three mass‑defect bases** entered as:
 
 | Input      | Meaning                      |
@@ -70,12 +70,21 @@ comparing samples.
 | `CH2,Cl-H` | CH₂ and (Cl−H)               |
 | `CH2/10`   | fractional mass with base 10 |
 
+3.  **Rounding mode** → choose how nominal masses are computed inside the MD formulas:
+
+| Option     | Meaning                                              |
+|------------|------------------------------------------------------|
+| `round`    | standard rounding to the nearest integer (default)   |
+| `ceiling`  | always round up to the next integer                  |
+| `floor`    | always round down to the previous integer            |
+The same mode is applied consistently to MD1, MD2, and MD3.
+
 \
 After clicking **Process** it computes:  
--   **OMD** – original mass defect\
--   **RMD** – relative mass defect\
+-   **OMD** – original mass defect
+-   **RMD** – relative mass defect
 -   **MD1 (MD2**, **MD3)** – user input mass defects\
-  All appear in axis selectors for the interactive plots. \
+  All appear in axis selectors for the interactive plots.
   
 3.  Choose plot ranges (intensity, mz, rt) and click **Plot**. 
     **Two synchronized scatter plots** appear using Plotly.
@@ -213,7 +222,7 @@ Plot types: **Grouped bars** or **Lines + markers**.
     auto‑refreshes the sample plot (capped at 40 features for
     legibility).
 -   Legend format:
-    `id=… | mz=… | rt=… | intensity=….
+    `id=… | mz=… | rt=… | intensity=…`.
 
 ### 2.7 Selection logic
 
@@ -237,6 +246,11 @@ values if present.
 
 ### 2.9 Mass Defect Equations
 
+In all equations below, $\text{nom}(\cdot)$ denotes the **nominal-mass operator** and can be chosen as `round`, `ceiling`, or `floor`:
+
+
+The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown below.
+
 <p><b>OMD</b> — original mass defect</p>
 
 <p>$$ \text{OMD} = \text{round}(m) - m $$</p>
@@ -249,19 +263,19 @@ values if present.
 
 <p>$$ m_1 = m \times \frac{\text{round}(u_1)}{u_1} $$</p>
 
-<p>$$ \text{MD1} = \text{round}(m_1) - m_1 $$</p>
+<p>$$ \text{MD1} = \text{nom}(m_1) - m_1 $$</p>
 
 <p><b>MD2</b> — second‑order MD with unit $u_2$</p>
 
 <p>$$ m_2 = \frac{\text{MD1}(m)}{\text{MD1}(u_2)} $$</p>
 
-<p>$$ \text{MD2} = \text{round}(m_2) - m_2 $$</p>
+<p>$$ \text{MD2} = \text{nom}(m_2) - m_2 $$</p>
 
 <p><b>MD3</b> — third‑order MD with unit $u_3$</p>
 
 <p>$$ m_3 = \frac{\text{MD2}(m)}{\text{MD2}(u_3)} $$</p>
 
-<p>$$ \text{MD3} = \text{round}(m_3) - m_3 $$</p>
+<p>$$ \text{MD3} = \text{nom}(m_3) - m_3 $$</p>
 
 **Examples of the MD‑formula input box**
 
@@ -293,13 +307,13 @@ values if present.
 
 # 3. In‑Source Fragmentation (ISF) tab
 
-The ISF tab appear when pressing check box "Show ISF analysis tab". It annotates MS1 features that are likely in‑source fragments
+The ISF tab appears when the sidebar checkbox **"Show ISF analysis tab"** (in the Mass Defect tab) is ticked. It annotates MS1 features that are likely in-source fragments
 of other features, using an MS2 fragment file. It shares the same
 crosstalk selection model, sample comparison, and column‑mapping as the MD tab.
 
 ### 3.1 Workflow
 
-1.  **Upload feature CSV** → confirm column mapping.
+1.  **Upload feature list file** → confirm column mapping.
 2.  **Upload fragment file** → Only required for In-source fragmentation annotation. 
 Supports both .mgf and .msp format. 
 Should contain the fragments of the feature as it used to find matches between fragment ions (MS2) and feature ions (MS1). 
@@ -314,15 +328,14 @@ Needs to contain fragment peaks, retention time and precursor mz.
 
 ### 3.2 Interactive plots
 
--   Two Plotly scatter plots side-by-side. Each plot has independent X variable and Y Variabel. Any numeric column is selectable.
--   Enabling **Show intensity as size** scales point size by selected intensity column.
--   **Lasso / box select** in either scatter or the MD/mz **network
-    plot** highlights the same features in all three views
-    (crosstalk‑linked).
--   Selection drives the **selected‑data table**, the **barplot**, the
-    **MD/mz difference table**, and the **sample comparison plot**.
+-   Two Plotly scatter plots side-by-side. Each plot has independent X variable and Y variable. Any numeric column is selectable.
+-   Enabling **Show intensity as size** scales point size by the selected intensity column.
+-   **Lasso / box select** in either scatter or the **ISF network plot**
+    highlights the same features in all three views (crosstalk-linked).
+-   Selection drives the **selected-data table**, the ISF network
+    plot, and the **sample comparison plot**.
 -   Use the **Reset selection** button on the tab to clear all linked
-    selections and re‑render the plots.
+    selections and re-render the plots.
     
 ### 3.3 Feature table (selection‑linked)
 

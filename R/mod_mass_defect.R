@@ -6,7 +6,7 @@ mass_defect_ui <- function(id) {
     sidebarLayout(
       sidebarPanel(
         checkboxInput(ns("show_isf_tab"), "Show ISF analysis tab", FALSE),
-        fileInput(ns('file1'), 'Choose Feature File (CSV / Excel)',
+        fileInput(ns('file1'), 'Choose Feature File (.csv / .xlsx / .xls)',
                   accept = c('.csv', '.xlsx', '.xls',
                              'text/csv', 'text/comma-separated-values,text/plain',
                              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -370,8 +370,8 @@ mass_defect_server <- function(id) {
     MD_data_raw <- eventReactive(input$go_process, {
       df <- raw_file()
       withProgress(message = "Applying MD formulas...", value = 0.3, {
-        mdh1 <- enviGCMS::getmdh(df$mz, cus = input$cus1, method = input$rounding)
-        mdh2 <- enviGCMS::getmdh(df$mz, cus = input$cus2, method = input$rounding)
+        mdh1 <- getmdh(df$mz, cus = input$cus1, method = input$rounding)
+        mdh2 <- getmdh(df$mz, cus = input$cus2, method = input$rounding)
 
         mdh  <- cbind(mdh1[, -1, drop=FALSE], mdh2[, -1, drop=FALSE])
         colnames(mdh) <- c(paste0("Formula1_", colnames(mdh1))[-1],
@@ -1169,12 +1169,6 @@ mass_defect_server <- function(id) {
       vals[!is.na(vals) & vals != "(none)" & nzchar(vals)]
     })
 
-    output$sample_ref_ui <- renderUI({
-      req(length(sample_map()) > 0)
-      selectInput(ns("sample_ref"), "Reference sample",
-                  choices = names(sample_map()),
-                  selected = names(sample_map())[1])
-    })
 
     # Only rebuild the settings when the "Plot sample comparison" button is
     # pressed. Selection changes automatically refresh the plot.

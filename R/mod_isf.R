@@ -5,7 +5,7 @@ isf_ui <- function(id) {
   tagList(
     sidebarLayout(
       sidebarPanel(
-        fileInput(ns('file_feat'), 'Choose Feature File (CSV / Excel)',
+        fileInput(ns('file_feat'), 'Choose Feature File (.csv / .xlsx / .xls)',
                   accept = c('.csv', '.xlsx', '.xls',
                              'text/csv',
                              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -40,7 +40,6 @@ isf_ui <- function(id) {
                            "Cancel halts before the next processing phase (the heavy fragment match cannot be interrupted mid-run). Use Reload if truly stuck."),
                 tags$br(), tags$br(),
                 checkboxInput(ns('ins'), 'Show intensity as size', FALSE),
-                checkboxInput(ns("show_leg"), "Show plot legends", TRUE),
                 uiOutput(ns("slide_ui")),
                 actionButton(ns('go_plot'), 'Plot', width = "100%", class = "btn-info")
               )
@@ -825,12 +824,6 @@ isf_server <- function(id) {
       vals2[!is.na(vals2) & vals2 != "(none)" & nzchar(vals2)]
     })
 
-    output$sample_ref_ui <- renderUI({
-      req(length(sample_map()) > 0)
-      selectInput(ns("sample_ref"), "Reference sample",
-                  choices = names(sample_map()),
-                  selected = names(sample_map())[1])
-    })
 
     sample_settings <- eventReactive(input$go_sample_comp, {
       req(sample_map())

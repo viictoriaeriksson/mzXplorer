@@ -485,6 +485,137 @@ strict_rt_filter <- function(df, trend = NULL,
         df
 }
 
+
+########### MD calculation function #############
+
+getmdh <- function(mz, cus = c("CH2,H2"), method = "round") {
+        getorder <- function(input) {
+                trimws(if (grepl(',', input)) unlist(strsplit(input, ',')) else input)
+        }
+        temp <- getorder(cus)
+        cus  <- NULL
+        for (i in seq_along(temp)) cus <- c(cus, getmass(temp[i]))
+        
+        if (length(cus) == 2) {
+                omd  <- mz * round(cus[1]) / cus[1]
+                sumd <- cus[2] * round(cus[1]) / cus[1]
+                if (method == 'round') {
+                        MD1 <- round(round(omd) - omd, digits = 7)
+                        md2 <- round(round(sumd) - sumd, digits = 7)
+                        smd <- MD1 / md2
+                        MD2 <- round(round(smd) - smd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2)
+                } else if (method == 'floor') {
+                        MD1 <- round(floor(omd) - omd, digits = 7)
+                        md2 <- round(floor(sumd) - sumd, digits = 7)
+                        smd <- MD1 / md2
+                        MD2 <- round(floor(smd) - smd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2)
+                } else {
+                        MD1 <- round(ceiling(omd) - omd, digits = 7)
+                        md2 <- round(ceiling(sumd) - sumd, digits = 7)
+                        smd <- MD1 / md2
+                        MD2 <- round(ceiling(smd) - smd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2)
+                }
+                
+        } else if (length(cus) == 3) {
+                
+                omd  <- mz * round(cus[1]) / cus[1]
+                sumd <- cus[2] * round(cus[1]) / cus[1]
+                tumd <- cus[3] * round(cus[1]) / cus[1]
+                
+                if (method == 'round') {
+                        MD1 <- round(round(omd) - omd, digits = 7)
+                        md2 <- round(round(sumd) - sumd, digits = 7)
+                        md3 <- round(round(tumd) - tumd, digits = 7)
+                        smd  <- MD1 / md2; tsmd <- md3 / md2
+                        MD2 <- round(round(smd) - smd, digits = 7)
+                        md3 <- round(round(tsmd) - tsmd, digits = 7)
+                        tmd <- MD2 / md3
+                        MD3 <- round(round(tmd) - tmd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
+                } else if (method == 'floor') {
+                        MD1 <- round(floor(omd) - omd, digits = 7)
+                        md2 <- round(floor(sumd) - sumd, digits = 7)
+                        md3 <- round(floor(tumd) - tumd, digits = 7)
+                        smd  <- MD1 / md2; tsmd <- md3 / md2
+                        MD2 <- round(floor(smd) - smd, digits = 7)
+                        md3 <- round(floor(tsmd) - tsmd, digits = 7)
+                        tmd <- MD2 / md3
+                        MD3 <- round(floor(tmd) - tmd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
+                } else {
+                        MD1 <- round(ceiling(omd) - omd, digits = 7)
+                        md2 <- round(ceiling(sumd) - sumd, digits = 7)
+                        md3 <- round(ceiling(tumd) - tumd, digits = 7)
+                        smd  <- MD1 / md2; tsmd <- md3 / md2
+                        MD2 <- round(ceiling(smd) - smd, digits = 7)
+                        md3 <- round(ceiling(tsmd) - tsmd, digits = 7)
+                        tmd <- MD2 / md3
+                        MD3 <- round(ceiling(tmd) - tmd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
+                }
+                
+        } else if (length(cus) > 3) {
+                
+                message("Sorry, only three MD base units are allowed!")
+                omd  <- mz * round(cus[1]) / cus[1]
+                sumd <- cus[2] * round(cus[1]) / cus[1]
+                tumd <- cus[3] * round(cus[1]) / cus[1]
+                
+                if (method == 'round') {
+                        MD1 <- round(round(omd) - omd, digits = 7)
+                        md2 <- round(round(sumd) - sumd, digits = 7)
+                        md3 <- round(round(tumd) - tumd, digits = 7)
+                        smd  <- MD1 / md2; tsmd <- md3 / md2
+                        MD2 <- round(round(smd) - smd, digits = 7)
+                        md3 <- round(round(tsmd) - tsmd, digits = 7)
+                        tmd <- MD2 / md3
+                        MD3 <- round(round(tmd) - tmd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
+                } else if (method == 'floor') {
+                        MD1 <- round(floor(omd) - omd, digits = 7)
+                        md2 <- round(floor(sumd) - sumd, digits = 7)
+                        md3 <- round(floor(tumd) - tumd, digits = 7)
+                        smd  <- MD1 / md2; tsmd <- md3 / md2
+                        MD2 <- round(floor(smd) - smd, digits = 7)
+                        md3 <- round(floor(tsmd) - tsmd, digits = 7)
+                        tmd <- MD2 / md3
+                        MD3 <- round(floor(tmd) - tmd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
+                } else {
+                        MD1 <- round(ceiling(omd) - omd, digits = 7)
+                        md2 <- round(ceiling(sumd) - sumd, digits = 7)
+                        md3 <- round(ceiling(tumd) - tumd, digits = 7)
+                        smd  <- MD1 / md2; tsmd <- md3 / md2
+                        MD2 <- round(ceiling(smd) - smd, digits = 7)
+                        md3 <- round(ceiling(tsmd) - tsmd, digits = 7)
+                        tmd <- MD2 / md3
+                        MD3 <- round(ceiling(tmd) - tmd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
+                }
+                
+        } else {
+                # single MD base
+                if (method == 'round') {
+                        omd <- mz * round(cus) / cus
+                        MD1 <- round(round(omd) - omd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1)
+                } else if (method == 'floor') {
+                        omd <- mz * floor(cus) / cus
+                        MD1 <- round(floor(omd) - omd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1)
+                } else {
+                        omd <- mz * ceiling(cus) / cus
+                        MD1 <- round(ceiling(omd) - omd, digits = 7)
+                        re  <- cbind.data.frame(mz, MD1)
+                }
+        }
+        return(re)
+}
+
+
 ###########  Built-in Homologue series finder  ###########
 find_homologues <- function(
                 df,
