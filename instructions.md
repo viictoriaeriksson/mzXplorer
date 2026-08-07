@@ -319,10 +319,13 @@ Supports both .mgf and .msp format.
 Should contain the fragments of the feature as it used to find matches between fragment ions (MS2) and feature ions (MS1). 
 Needs to contain fragment peaks, retention time and precursor mz.  
 
-3.   Set **ppm tolerance** and **RT tolerance** for detecting ISF and press **Process*
+3.   Set **m/z tolerance (Da)** (default 0.01 Da) and **RT tolerance**
+     for detecting ISF, and optionally add **neutral losses** and
+     **adducts** to annotate (see 3.7). Press **Process**.
 4.  Click **Plot**. mzXplorer produces:
     -   two synchronized scatter plots,
     -   an **ISF network plot**,
+    -   an **ISF ratio plot** (fragment/precursor intensity vs. RT),
     -   a **selection‑linked feature table**,
     -   a **processed feature table** in the yellow export section.
 
@@ -330,44 +333,98 @@ Needs to contain fragment peaks, retention time and precursor mz.
 
 -   Two Plotly scatter plots side-by-side. Each plot has independent X variable and Y variable. Any numeric column is selectable.
 -   Enabling **Show intensity as size** scales point size by the selected intensity column.
--   **Lasso / box select** in either scatter or the **ISF network plot**
-    highlights the same features in all three views (crosstalk-linked).
--   Selection drives the **selected-data table**, the ISF network
-    plot, and the **sample comparison plot**.
+-   **Lasso / box select** in any of the scatter plots, the **ISF
+    network plot** or the **ISF ratio plot** highlights the same
+    features across all views.
+-   The **ISF network plot** uses 5 categories with distinct colours:
+    *Precursor / clean* (blue), *ISF (fragment)* (orange),
+    *ISF (neutral loss)* (green), *ISF (fragment + NL)* (purple) and
+    *Adduct* (pink). Adduct nodes have no edges.
+-   The **ISF ratio plot** shows only ISF pairs (adducts excluded) with
+    3 legend entries: *Fragment*, *Neutral loss* and
+    *Fragment + Neutral loss*. Selected points from any linked plot are
+    over‑drawn in the amber highlight colour.
 -   Use the **Reset selection** button on the tab to clear all linked
     selections and re-render the plots.
-    
+
 ### 3.3 Feature table (selection‑linked)
 
-Displays only rows in the current selection (or all rows when nothing is
-selected). The `ISF_annotation` column is the **first column** and shows
-either `not ISF` or `ISF of ID <precursor id(s)>`.
+Selection behaviour:
+
+-   When a selection is made in **any plot**, the selection‑linked
+    table is filtered to show ONLY the selected features (all rows are
+    pre‑selected).
+-   When a selection is made **in the table** (row clicks), the table
+    keeps showing ALL features and the selection is echoed to every
+    plot as highlighted points — the table is NOT filtered.
+-   When nothing is selected, the table shows all features.
+
+Columns:
+-   `ISF_dDa` = difference between m/z of MS2 fragment and ISF features in Da.
+-   `ISF_NL_dDa` = difference between feature-to-feature gap and user-input neutral 
+    loss mass, in Da. For example a measured 18.0120 Da gap between two features vs H₂O (18.0106) yields `0.0014`.
+-   `ISF_drt` / `ISF_NL_drt` = RT difference in minutes.
+-   `ISF_ratio` / `ISF_NL_ratio` = fragment intensity / precursor
+    intensity.
+-   `Adduct_annotation` = `adduct of ID <partner id(s)>` on both
+    partners of an adduct pair; `Adduct_type` names the specific
+    adduct species assigned to that feature.
 
 -   **Exclude identified from ISF in export** — when ticked, the
-    **Export Selected** download drops rows whose `ISF_annotation` is
-    not `not ISF`. Possible to downloads the current selection (or the full
-    table when no selection is active)
--   **Reset selection** — clears the crosstalk selection.
+    **Export Selected** download drops rows whose `ISF_annotation` OR
+    `ISF_NL_annotation` is not `not ISF`.
+-   **Reset selection** — clears the plot/table selection.
 
 ### 3.4 Processed feature table (full)
 
-**Not** affected by plot selection — this is always the full processed list, so it stays a stable reference
-for export.
+**Not** affected by plot selection — always the full processed list.
 
 -   **Filter table results** — radio buttons for *only ISF*, *only
-    non‑ISF*, or *both*.
--   **Editable `ISF_annotation`** — double‑click a cell in the first
-    column to manually re‑tag a feature (e.g. mark a false positive as
-    `not ISF`). Edits are persisted to the underlying data and are
-    reflected immediately in the plots, the selection‑linked table and
-    the export.
+    non‑ISF*, or *both*. *only ISF* includes any feature with either
+    a fragment or NL annotation.
+-   **Editable `ISF_annotation`** — double‑click a cell to manually
+    re‑tag. Edits are persisted and immediately reflected in the plots
+    and export. *Should only be used if evidence exist on wrong tag.*
 -   **Export Processed Table (Full CSV Columns)** — downloads the full
-    processed table with all original columns plus `ISF_annotation`,
-    respecting any manual re‑tagging made.
+    table with all original columns plus every new ISF / NL / adduct
+    column, respecting manual re‑tags.
+    
+### 3.7 Neutral‑loss and adduct annotation
 
-### 3.5 Sample comparison *(optional)*
+**Neutral losses**: select any subset of the preset losses (H₂O
+18.0106, NH₃ 17.0265, CO₂ 43.9898, SO₃ 79.9568, HCl 35.9767, HF
+20.0062) and/or add custom entries via the `Label,mass;…` text field.
+For every enabled loss X and every pair of features (j, i) in the
+data:
 
-Similar to the MD tab. Enable **Enable sample comparison** to be able to compare selected features (from other plots) accross different samples.
+-   If `|mz_i − mz_j − X| ≤ m/z tolerance (Da)` **and**
+    `|rt_i − rt_j| ≤ RT tolerance`, then j is annotated as the
+    neutral‑loss fragment of i (the heavier partner is treated as the
+    precursor).
+-   Multiple precursor candidates per fragment are stored
+    comma‑separated, sorted by ascending `|ISF_NL_dDa|` (best match
+    first).
+
+**Adducts**: select any subset of preset adducts (`[M+H]+` 1.007276,
+`[M+Na]+` 22.989218, `[M+K]+` 38.963158, `[M+NH₄]+` 18.033823,
+`[M−H]−` −1.007276, `[M+HCOO]−` 44.998201, `[M+Cl]−` 34.969402)
+and/or custom entries. For every unordered pair of adducts (a, b)
+with masses (Mₐ, M_b), any two features (j, i) satisfying:
+
+-   `|mz_i − mz_j − |M_b − Mₐ|| ≤ m/z tolerance (Da)` **and**
+-   `|rt_i − rt_j| ≤ RT tolerance`
+
+are flagged as adducts of the **same neutral molecule M**. The
+lighter partner is labelled with the lighter adduct's name and the
+heavier partner with the heavier one. Both partners are annotated in
+`Adduct_annotation` (`adduct of ID <partner id>`) and `Adduct_type`.
+**Adduct annotation overrides ISF**: if a feature is flagged as an
+adduct, its `ISF_annotation`, `ISF_NL_annotation` and all associated
+`dDa/drt/ratio` fields are cleared.
+
+### 3.6 Sample comparison *(optional)*
+
+Similar to the MD tab. Enable **Enable sample comparison** to be able to compare selected features (from other plots) across different samples.
 Choose the number of samples and selected the samples intesnity columns.
 Plot types: **Grouped bars** or **Lines + markers**.
 -   Plot is drawn on **Plot sample comparison**; settings apply on
@@ -379,18 +436,20 @@ Plot types: **Grouped bars** or **Lines + markers**.
     `id=… | mz=… | rt=… | intensity=… | ISF_annotation=…`.
 
 
-### 3.6 Tips
+### 3.7 Tips
 
--   Start with a **wider ppm** (10-15) and RT tolerance to see all
-    candidates, then tighten once the network looks reasonable.
+-   Start with a **wider m/z tolerance** (e.g. 0.02 Da) and RT
+    tolerance to see all candidates, then tighten once the network
+    looks reasonable.
 -   Use the **network plot** to spot precursors with many linked
-    fragments
+    fragments.
 -   Use **lasso select** on the network plot to isolate a candidate
     precursor and its fragments in the feature table.
 -   Curate false positives via the editable `ISF_annotation` column in
-    the Full feature table, then re‑export.
+    the full feature table, then re‑export.
 -   Tick **Exclude identified from ISF in export** to get a clean
-    feature list (only `not ISF` rows) for downstream statistics.
+    feature list for downstream statistics.
+
 
 
 </div>

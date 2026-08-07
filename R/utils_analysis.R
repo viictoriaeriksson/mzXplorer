@@ -1,16 +1,16 @@
 #' Annotate In-Source Fragmentation (ISF).
 #'
-#' For every MS1 feature that lies within `ppm_tol` of a fragment peak
+#' For every MS1 feature that lies within `da_tol` Da of a fragment peak
 #' AND within `rt_tol` of the precursor RT, an annotation is added.
-#' `ISF_dppm` and `ISF_drt` are comma-separated strings — one value per
+#' `ISF_dDa` and `ISF_drt` are comma-separated strings — one value per
 #' matched precursor, in the same order as the IDs in `ISF_annotation`.
 #'
-#' Δppm is signed: (feature_mz − fragment_mz) / fragment_mz × 1e6
-#' ΔRT  is signed: (feature_rt − precursor_rt)
+#' ΔDa is signed: feature_mz − fragment_mz  (Da)
+#' ΔRT is signed: feature_rt − precursor_rt
 #'
-#' @return data.frame with ISF_annotation, ISF_dppm, ISF_drt
+#' @return data.frame with ISF_annotation, ISF_dDa, ISF_drt
 #' @export
-annotate_isf <- function(ms1, spectra, ppm_tol, rt_tol, progress = NULL) {
+annotate_isf <- function(ms1, spectra, da_tol, rt_tol, progress = NULL) {
   # `progress` is an optional callback: function(phase, i, n, detail).
   # It lets a Shiny caller drive `incProgress()` with per-chunk detail.
   # Silent no-op when NULL so the function is usable outside Shiny.
@@ -18,14 +18,13 @@ annotate_isf <- function(ms1, spectra, ppm_tol, rt_tol, progress = NULL) {
 
   .empty_isf <- function(df) {
     df$ISF_annotation <- "not ISF"
-    df$ISF_dppm       <- NA_character_
+    df$ISF_dDa        <- NA_character_
     df$ISF_drt        <- NA_character_
     df
   }
 
   if (length(spectra) == 0) return(.empty_isf(as.data.frame(ms1)))
 
-  ppm_factor <- ppm_tol * 1e-6
   .prog("build_peaks", 0L, length(spectra),
         sprintf("Building peak table from %d spectra...", length(spectra)))
 
@@ -43,8 +42,8 @@ annotate_isf <- function(ms1, spectra, ppm_tol, rt_tol, progress = NULL) {
       frag_mz      = fm,
       rt_low       = rt_val - rt_tol,
       rt_high      = rt_val + rt_tol,
-      mz_low       = fm * (1 - ppm_factor),
-      mz_high      = fm * (1 + ppm_factor)
+      mz_low       = fm - da_tol,
+      mz_high      = fm + da_tol
     )
   }), use.names = TRUE, fill = TRUE)
 
@@ -125,9 +124,28 @@ annotate_isf <- function(ms1, spectra, ppm_tol, rt_tol, progress = NULL) {
         sprintf("Filtering %s raw matches...",
                 format(nrow(matches), big.mark = " ")))
   # Discard self-hits and any match where the "fragment" is heavier than
-  # its own precursor — both are meaningless as ISF.
+  # its own precursor - both are meaningless as ISF.
   matches <- matches[(is.na(precursor_id) | id != precursor_id) &
                      (is.na(precursor_mz) | feat_mz <= precursor_mz)]
+
+  if (!nrow(matches)) return(.empty_isf(as.data.frame(dt_ms1)))
+
+  # Resolve the MS1 precursor RT from the MS1 feature table (by id).
+  # The `precursor_rt` we joined on so far is the MS2 SCAN rt, not the
+  # rt of the MS1 feature with id == precursor_id. Users expect ISF_drt
+  # to be the RT delta between the two MS1 features (fragment and its
+  # precursor), so we replace precursor_rt with the MS1 lookup and then
+  # re-apply the RT tolerance to enforce it MS1-to-MS1.
+  ms1_rt_map <- dt_ms1[, .(precursor_id = id, ms1_prec_rt = rt)]
+  matches <- merge(matches, ms1_rt_map, by = "precursor_id",
+                   all.x = TRUE, sort = FALSE)
+  # Drop matches whose precursor_id cannot be resolved to an MS1 row
+  # (defensive - shouldn't normally happen since precursor_ids come
+  # from the same feature list).
+  matches <- matches[!is.na(ms1_prec_rt)]
+  if (!nrow(matches)) return(.empty_isf(as.data.frame(dt_ms1)))
+  matches[, precursor_rt := ms1_prec_rt][, ms1_prec_rt := NULL]
+  matches <- matches[abs(feat_rt - precursor_rt) <= rt_tol]
 
   if (!nrow(matches)) return(.empty_isf(as.data.frame(dt_ms1)))
 
@@ -136,40 +154,252 @@ annotate_isf <- function(ms1, spectra, ppm_tol, rt_tol, progress = NULL) {
                 format(nrow(matches), big.mark = " ")))
 
   matches[, `:=`(
-    dppm = (feat_mz - frag_mz) / frag_mz * 1e6,
-    drt  = feat_rt - precursor_rt
+    dDa = feat_mz - frag_mz,
+    drt = feat_rt - precursor_rt
   )]
   matches[, pkey := data.table::fifelse(is.na(precursor_id),
                                         -1, as.numeric(precursor_id))]
-  best_idx <- matches[, .I[which.min(abs(dppm))], by = .(id, pkey)]$V1
-  per_pair <- matches[best_idx, .(id, pkey, precursor_id, dppm, drt)]
+  best_idx <- matches[, .I[which.min(abs(dDa))], by = .(id, pkey)]$V1
+  per_pair <- matches[best_idx, .(id, pkey, precursor_id, dDa, drt)]
 
   data.table::setorder(per_pair, id, pkey)
   per_pair[, `:=`(
     p_label  = data.table::fifelse(is.na(precursor_id),
                                    "Unknown", as.character(precursor_id)),
-    dppm_fmt = sprintf("%.2f", dppm),
+    dDa_fmt  = sprintf("%.4f", dDa),
     drt_fmt  = sprintf("%.3f", drt)
   )]
 
   agg <- per_pair[, .(
-    ids      = paste(p_label,  collapse = ", "),
-    dppm_str = paste(dppm_fmt, collapse = ", "),
-    drt_str  = paste(drt_fmt,  collapse = ", ")
+    ids     = paste(p_label, collapse = ", "),
+    dDa_str = paste(dDa_fmt, collapse = ", "),
+    drt_str = paste(drt_fmt, collapse = ", ")
   ), by = id]
 
   ms1_out <- data.table::copy(dt_ms1)
   ms1_out[, ISF_annotation := "not ISF"]
-  ms1_out[, ISF_dppm       := NA_character_]
+  ms1_out[, ISF_dDa        := NA_character_]
   ms1_out[, ISF_drt        := NA_character_]
 
   ms1_out[agg, `:=`(
     ISF_annotation = paste0("ISF of ID ", ids),
-    ISF_dppm       = dppm_str,
+    ISF_dDa        = dDa_str,
     ISF_drt        = drt_str
   ), on = "id"]
 
   return(as.data.frame(ms1_out))
+}
+
+#' Parse a mixed preset+custom neutral-loss / adduct input.
+#'
+#' Preset entries look like `"H2O:18.0106"` (label:mass). Custom string
+#' looks like `"Label1,mass1; Label2,mass2"`. Returns a named numeric
+#' vector (names = labels, values = masses in Da). Malformed entries
+#' are silently skipped.
+#' @export
+parse_mass_input <- function(preset_vals, custom_str = "") {
+  out <- c()
+  for (v in preset_vals) {
+    p <- strsplit(v, ":", fixed = TRUE)[[1]]
+    if (length(p) == 2) {
+      m <- suppressWarnings(as.numeric(p[2]))
+      if (is.finite(m)) out[[p[1]]] <- m
+    }
+  }
+  if (isTRUE(nzchar(custom_str))) {
+    for (entry in strsplit(custom_str, ";", fixed = TRUE)[[1]]) {
+      entry <- trimws(entry)
+      if (!nzchar(entry)) next
+      p <- strsplit(entry, ",", fixed = TRUE)[[1]]
+      if (length(p) == 2) {
+        nm <- trimws(p[1]); m <- suppressWarnings(as.numeric(trimws(p[2])))
+        if (nzchar(nm) && is.finite(m)) out[[nm]] <- m
+      }
+    }
+  }
+  out
+}
+
+#' Add neutral-loss + adduct annotations to an ISF-annotated feature
+#' table.
+#'
+#' Given the output of `annotate_isf()` (columns id, mz, rt, intensity,
+#' ISF_annotation, ISF_dppm, ISF_drt), adds:
+#'   * ISF_ratio         - intensity_ISF / intensity_precursor, per
+#'                         precursor ID in ISF_annotation, comma-separated,
+#'                         1 decimal.
+#'   * ISF_NL_annotation - "ISF of ID X, Y" via neutral-loss matching.
+#'   * ISF_NL_type       - comma-separated NL labels (same order).
+#'   * ISF_NL_ratio      - comma-separated ratios (same order).
+#'   * Adduct_annotation - "adduct of ID X, Y" if this feature's m/z
+#'                         differs from another same-RT feature by any
+#'                         pairwise difference between two selected
+#'                         adducts. Overrides ISF tags for that feature.
+#'   * Adduct_type       - comma-separated adduct-pair labels.
+#' @export
+annotate_extra <- function(df, nl_list = c(), adduct_list = c(),
+                           da_tol = 0.01, rt_tol = 0.05) {
+  n <- nrow(df)
+  df$ISF_ratio         <- NA_character_
+  df$ISF_NL_annotation <- "not ISF"
+  df$ISF_NL_type       <- NA_character_
+  df$ISF_NL_ratio      <- NA_character_
+  df$ISF_NL_dDa        <- NA_character_
+  df$ISF_NL_drt        <- NA_character_
+  df$Adduct_annotation <- "no adduct"
+  df$Adduct_type       <- NA_character_
+  if (!n) return(df)
+  need <- c("id", "mz", "rt", "intensity")
+  if (!all(need %in% names(df))) return(df)
+
+  dt <- data.table::as.data.table(df[, need])
+
+  # ---- Fragment-based ratios (from existing ISF_annotation) ----------
+  if ("ISF_annotation" %in% names(df)) {
+    frag_rows <- which(!is.na(df$ISF_annotation) & df$ISF_annotation != "not ISF")
+    if (length(frag_rows)) {
+      id_int <- setNames(as.numeric(df$intensity), as.character(df$id))
+      ids_list <- strsplit(sub("^ISF of ID\\s*", "", df$ISF_annotation[frag_rows]),
+                           "\\s*,\\s*")
+      df$ISF_ratio[frag_rows] <- vapply(seq_along(frag_rows), function(k) {
+        ids <- suppressWarnings(as.numeric(ids_list[[k]]))
+        p_int <- id_int[as.character(ids)]
+        r <- as.numeric(df$intensity[frag_rows[k]]) / as.numeric(p_int)
+        paste(ifelse(is.finite(r), sprintf("%.1f", r), ""), collapse = ", ")
+      }, character(1))
+    }
+  }
+
+  # Helper: one shifted non-equi self-join for a given neutral-loss mass X.
+  # Semantics: precursor i has larger m/z; fragment j has smaller m/z with
+  # (mz_i - mz_j) ~ X within a symmetric ±da_tol window.
+  # Returns rows with mz/rt for both partners so callers can compute deltas.
+  # NB: for non-equi joins, the join columns (`mz`, `rt`) in the result
+  #     take the *query bound* values from `q`, NOT the LHS row values.
+  #     We therefore reference the LHS row values with the `x.` prefix.
+  .match_shift <- function(X) {
+    q <- dt[, .(j_id = id, j_mz = mz, j_rt = rt, j_int = intensity,
+                rt_lo = rt - rt_tol, rt_hi = rt + rt_tol,
+                mz_target = mz + X)]
+    q[, `:=`(mz_lo = mz_target - da_tol,
+             mz_hi = mz_target + da_tol)]
+    p <- dt[q,
+            on = .(rt >= rt_lo, rt <= rt_hi, mz >= mz_lo, mz <= mz_hi),
+            nomatch = 0, allow.cartesian = TRUE,
+            .(j_id, j_mz, j_rt, j_int,
+              i_id = id, i_mz = x.mz, i_rt = x.rt, i_int = intensity)]
+    p[j_id != i_id]
+  }
+
+  # ---- Neutral-loss ISF matching ------------------------------------
+  if (length(nl_list)) {
+    nl_hits <- data.table::rbindlist(lapply(names(nl_list), function(nm) {
+      X <- as.numeric(nl_list[[nm]])
+      if (!is.finite(X) || X <= 0) return(NULL)
+      p <- .match_shift(X)
+      if (!nrow(p)) return(NULL)
+      p[, nl_label := nm][, nl_mass := X][]
+    }), use.names = TRUE, fill = TRUE)
+    if (nrow(nl_hits)) {
+      # ΔDa signed: (mz_i - mz_j) - X — how far the observed mass gap is
+      # from the target neutral-loss mass. Positive = gap larger than X.
+      nl_hits[, dDa   := abs((i_mz - j_mz) - nl_mass)]
+      nl_hits[, drt   := j_rt - i_rt]
+      nl_hits[, ratio := as.numeric(j_int) / as.numeric(i_int)]
+      # Sort so the best (smallest |dDa|) precursor match is listed first
+      # within each fragment - this way the comma-separated columns line
+      # up with the "closest match" annotation the user is looking for.
+      nl_hits[, .abs_dDa := abs(dDa)]
+      data.table::setorder(nl_hits, j_id, .abs_dDa)
+      nl_hits[, .abs_dDa := NULL]
+      agg <- nl_hits[, .(
+        ids    = paste(i_id, collapse = ", "),
+        types  = paste(nl_label, collapse = ", "),
+        ratios = paste(ifelse(is.finite(ratio),
+                              sprintf("%.1f", ratio), ""),
+                       collapse = ", "),
+        dDas   = paste(ifelse(is.finite(dDa),
+                              sprintf("%.4f", dDa), ""),
+                       collapse = ", "),
+        drts   = paste(ifelse(is.finite(drt),
+                              sprintf("%.3f", drt), ""),
+                       collapse = ", ")
+      ), by = j_id]
+      m <- match(agg$j_id, df$id)
+      df$ISF_NL_annotation[m] <- paste0("ISF of ID ", agg$ids)
+      df$ISF_NL_type[m]       <- agg$types
+      df$ISF_NL_ratio[m]      <- agg$ratios
+      df$ISF_NL_dDa[m]        <- agg$dDas
+      df$ISF_NL_drt[m]        <- agg$drts
+    }
+  }
+
+  # ---- Adduct matching (overrides ISF) ------------------------------
+  # For each pair of user-supplied adducts (a, b) with masses (Ma, Mb),
+  # any two features whose m/z differ by |Mb - Ma| (within da_tol) and
+  # which co-elute (within rt_tol) are flagged as adduct partners of
+  # the same neutral molecule M. Both partners are annotated (the
+  # lighter one is labelled as adduct_a, the heavier as adduct_b) and
+  # any ISF / NL flag on either feature is cleared.
+  if (length(adduct_list) >= 2) {
+    ad_nm <- names(adduct_list)
+    ad_v  <- as.numeric(adduct_list)
+    # Iterate ordered pairs a<b so each unsigned diff is visited once.
+    diffs <- list()
+    for (a in seq_along(ad_nm)) for (b in seq_along(ad_nm)) {
+      if (a >= b) next
+      D <- ad_v[b] - ad_v[a]
+      if (!is.finite(D) || abs(D) < 1e-6) next
+      # heavier - lighter; swap labels if needed so lo_lab is lighter
+      if (D > 0) {
+        diffs[[length(diffs) + 1L]] <- list(
+          D = D, lo_lab = ad_nm[a], hi_lab = ad_nm[b])
+      } else {
+        diffs[[length(diffs) + 1L]] <- list(
+          D = -D, lo_lab = ad_nm[b], hi_lab = ad_nm[a])
+      }
+    }
+    ad_hits <- data.table::rbindlist(lapply(diffs, function(dd) {
+      p <- .match_shift(dd$D)
+      if (!nrow(p)) return(NULL)
+      # j is the lighter partner (base), i is heavier (base + D).
+      p[, `:=`(lo_lab = dd$lo_lab, hi_lab = dd$hi_lab)][]
+    }), use.names = TRUE, fill = TRUE)
+    if (nrow(ad_hits)) {
+      # Aggregate from lighter partner's perspective (j -> i list).
+      agg_lo <- ad_hits[, .(
+        ids   = paste(i_id, collapse = ", "),
+        types = paste(lo_lab, collapse = ", ")
+      ), by = j_id]
+      # And from the heavier partner's perspective (i -> j list).
+      agg_hi <- ad_hits[, .(
+        ids   = paste(j_id, collapse = ", "),
+        types = paste(hi_lab, collapse = ", ")
+      ), by = i_id]
+
+      m_lo <- match(agg_lo$j_id, df$id)
+      df$Adduct_annotation[m_lo] <- paste0("adduct of ID ", agg_lo$ids)
+      df$Adduct_type[m_lo]       <- agg_lo$types
+
+      m_hi <- match(agg_hi$i_id, df$id)
+      df$Adduct_annotation[m_hi] <- paste0("adduct of ID ", agg_hi$ids)
+      df$Adduct_type[m_hi]       <- agg_hi$types
+
+      # Adduct overrides ISF for BOTH partners.
+      m_all <- unique(c(m_lo, m_hi))
+      df$ISF_annotation[m_all]    <- "not ISF"
+      df$ISF_dDa[m_all]           <- NA_character_
+      df$ISF_drt[m_all]           <- NA_character_
+      df$ISF_ratio[m_all]         <- NA_character_
+      df$ISF_NL_annotation[m_all] <- "not ISF"
+      df$ISF_NL_type[m_all]       <- NA_character_
+      df$ISF_NL_ratio[m_all]      <- NA_character_
+      df$ISF_NL_dDa[m_all]        <- NA_character_
+      df$ISF_NL_drt[m_all]        <- NA_character_
+    }
+  }
+
+  df
 }
 
 #' Helper for series palette

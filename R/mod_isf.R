@@ -11,7 +11,7 @@ isf_ui <- function(id) {
                              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                              'application/vnd.ms-excel')),
         uiOutput(ns("file_feat_status")),
-        fileInput(ns('file_frag'), 'Choose Fragment File (MGF/MSP)', accept = c('.mgf', '.msp')),
+        fileInput(ns('file_frag'), 'Choose Fragment File (.mgf/ .msp)', accept = c('.mgf', '.msp')),
         uiOutput(ns("file_frag_status")),
 
         # --- Shown on "Plots & Table" — static subtab (ISF Processing + Column Mapping) ---
@@ -22,24 +22,54 @@ isf_ui <- function(id) {
             tabPanel("ISF Processing",
               div(class = "mzx-section mzx-isf",
                 tags$h4("ISF processing"),
-                numericInput(ns("insource_ppm"), "m/z tolerance (ppm)", value = 15, min = 1),
+                numericInput(ns("insource_da"), "m/z tolerance (Da)", value = 0.01, min = 0, step = 0.001),
                 numericInput(ns("rt_diff"), "RT tolerance", value = 0.05, min = 0, step = 0.01),
+                selectInput(ns("nl_presets"), "Neutral losses",
+                            multiple = TRUE,
+                            choices = c(
+                              "H2O (18.0106)"  = "H2O:18.0106",
+                              "NH3 (17.0265)"  = "NH3:17.0265",
+                              "CO2 (43.9898)"  = "CO2:43.9898",
+                              "SO3 (79.9568)"  = "SO3:79.9568",
+                              "HCl (35.9767)"  = "HCl:35.9767",
+                              "HF (20.0062)"   = "HF:20.0062"
+                            ),
+                            selected = NULL),
+                textInput(ns("nl_custom"), "Custom neutral losses",
+                          value = "",
+                          placeholder = "Label,mass; Label,mass"),
+                tags$small(style = "color:#777;",
+                           "Format: name,mass in Da separated by ';'. Example: CH4,16.0313; CO,27.9949"),
+                tags$br(), tags$br(),
+                selectInput(ns("adduct_presets"), "Adducts",
+                            multiple = TRUE,
+                            choices = c(
+                              "[M+H]+ (1.007276)"    = "[M+H]+:1.007276",
+                              "[M+Na]+ (22.989218)"  = "[M+Na]+:22.989218",
+                              "[M+K]+ (38.963158)"   = "[M+K]+:38.963158",
+                              "[M+NH4]+ (18.033823)" = "[M+NH4]+:18.033823",
+                              "[M-H]- (-1.007276)"   = "[M-H]-:-1.007276",
+                              "[M+HCOO]- (44.998201)"= "[M+HCOO]-:44.998201",
+                              "[M+Cl]- (34.969402)"  = "[M+Cl]-:34.969402"
+                            ),
+                            selected = NULL),
+                textInput(ns("adduct_custom"), "Custom adducts",
+                          value = "",
+                          placeholder = "Label,mass; Label,mass"),
+                tags$small(style = "color:#777;",
+                           "Format: name,mass in Da separated by ';'. Adduct pairs are matched on mass differences."),
+                tags$br(), tags$br(),
                 actionButton(ns('go_process'), 'Process', width = "100%", class = "btn-info"),
                 fluidRow(style = "margin-top:6px;",
-                  column(6, actionButton(ns("cancel_isf"), "Cancel",
+                  column(12, actionButton(ns("cancel_isf"), "Cancel",
                                          class = "btn-outline-warning btn-sm",
-                                         width = "100%")),
-                  column(6, tags$button("Reload session",
-                                         id = ns("reload_session"),
-                                         class = "btn btn-outline-danger btn-sm",
-                                         style = "width:100%;",
-                                         onclick = "window.location.reload(true); return false;",
-                                         title = "Force-reload the app if a run is stuck. Discards all state."))
+                                         width = "100%"))
                 ),
                 tags$small(style = "color:#777;",
-                           "Cancel halts before the next processing phase (the heavy fragment match cannot be interrupted mid-run). Use Reload if truly stuck."),
+                           "Cancel halts before the next processing phase (the heavy fragment match cannot be interrupted mid-run)."),
                 tags$br(), tags$br(),
                 checkboxInput(ns('ins'), 'Show intensity as size', FALSE),
+                checkboxInput(ns('show_leg'), 'Show plot legends', TRUE),
                 uiOutput(ns("slide_ui")),
                 actionButton(ns('go_plot'), 'Plot', width = "100%", class = "btn-info")
               )
@@ -107,6 +137,12 @@ isf_ui <- function(id) {
                             "Show only ISF features and their precursors (hide unmatched)",
                             value = FALSE),
               plotly::plotlyOutput(ns("isf_network_plot"), height = "500px")
+            ),
+            div(class = "mzx-pane mzx-isf",
+              tags$h4("ISF intensity ratio vs. retention time"),
+              tags$small(style = "color:#555;",
+                         "One point per (fragment, precursor) pair. Fragment ISF matches in orange, neutral-loss ISF matches in green. Adducts are excluded."),
+              plotly::plotlyOutput(ns("isf_ratio_plot"), height = "400px")
             ),
             div(class = "mzx-pane mzx-export",
               tags$h4("Processed feature table (export)"),
@@ -265,7 +301,7 @@ isf_server <- function(id) {
       showNotification("Cancel requested — will stop before the next phase.",
                        type = "warning", duration = 3, id = ns("nn_cancel_isf"))
     })
-    observeEvent(input$reload_session, { session$reload() })
+
 
     # --- Processing ---
     observeEvent(input$go_process, {
@@ -384,7 +420,7 @@ isf_server <- function(id) {
 
         t_match <- Sys.time()
         annotated <- tryCatch(
-          annotate_isf(ms1, spectra, input$insource_ppm, input$rt_diff,
+          annotate_isf(ms1, spectra, input$insource_da, input$rt_diff,
                        progress = prog_cb),
           error = function(e) {
             showNotification(
@@ -394,6 +430,23 @@ isf_server <- function(id) {
           })
         if (is.null(annotated)) return()
         dt_match <- round(as.numeric(difftime(Sys.time(), t_match, units = "secs")), 1)
+
+        # Post-annotate: neutral-loss + adduct matching.
+        nl_list <- parse_mass_input(input$nl_presets %||% character(0),
+                                    input$nl_custom %||% "")
+        ad_list <- parse_mass_input(input$adduct_presets %||% character(0),
+                                    input$adduct_custom %||% "")
+        annotated <- tryCatch(
+          annotate_extra(annotated, nl_list, ad_list,
+                         da_tol = input$insource_da,
+                         rt_tol = input$rt_diff),
+          error = function(e) {
+            showNotification(
+              sprintf("Neutral-loss / adduct annotation failed: %s",
+                      conditionMessage(e)),
+              type = "error", duration = 10)
+            annotated
+          })
         vals$df_annotated <- annotated
 
         # Ensure the bar tops out at 100% regardless of chunk-rounding.
@@ -528,7 +581,9 @@ isf_server <- function(id) {
                          intensity_col = {
                            c <- isf_size_state()$col
                            if (!is.null(c) && c %in% names(dff)) c else NULL
-                         })
+                         },
+                         show_legend = isTRUE(input$show_leg),
+                         sel_keys = sel_keys_rv())
       })
     })
     output$ISFPlot2 <- plotly::renderPlotly({
@@ -553,20 +608,28 @@ isf_server <- function(id) {
                          intensity_col = {
                            c <- isf_size_state()$col
                            if (!is.null(c) && c %in% names(dff)) c else NULL
-                         })
+                         },
+                         show_legend = isTRUE(input$show_leg),
+                         sel_keys = sel_keys_rv())
       })
     })
     
     # --- Selection tracking (backed by reactiveVal so it can be reset) ---
     sel_keys_rv  <- reactiveVal(character(0))
     sel_gen_isf  <- reactiveVal(0L)
+    # Which "source" last drove sel_keys_rv? Used as a re-render guard so
+    # updating a table's pre-selection from a plot pick doesn't immediately
+    # echo back into sel_keys_rv from the row-selection observer.
+    sel_source   <- reactiveVal("init")
 
     # Independent per-plot observers so a fresh selection on one plot fully
     # REPLACES the previous selection instead of unioning with stale keys
     # from the other (event_data is sticky per source).
     .apply_sel_isf <- function(ed) {
-      sel_keys_rv(if (!is.null(ed) && length(ed$key)) unique(as.character(ed$key))
-                  else character(0))
+      new_keys <- if (!is.null(ed) && length(ed$key))
+        unique(as.character(ed$key)) else character(0)
+      sel_source("plot")
+      sel_keys_rv(new_keys)
     }
     observeEvent(plotly::event_data("plotly_selected", source = ns("p1")),
                  .apply_sel_isf(plotly::event_data("plotly_selected", source = ns("p1"))),
@@ -578,8 +641,16 @@ isf_server <- function(id) {
                  .apply_sel_isf(plotly::event_data("plotly_selected", source = ns("isfnet"))),
                  ignoreNULL = FALSE, ignoreInit = TRUE)
 
+    # Selection from the ISF ratio plot: each point represents a
+    # (fragment, precursor) pair - the `.key` we attach is the fragment
+    # feature's .key so it lights up in the network + scatter plots.
+    observeEvent(plotly::event_data("plotly_selected", source = ns("isfratio")),
+                 .apply_sel_isf(plotly::event_data("plotly_selected", source = ns("isfratio"))),
+                 ignoreNULL = FALSE, ignoreInit = TRUE)
+
     observeEvent(input$clear_sel, {
       sel_keys_rv(character(0))
+      sel_source("plot")
       if (!is.null(vals$df_filtered)) {
         vals$d <- crosstalk::SharedData$new(as.data.frame(vals$df_filtered),
                                             key = ~.key, group = ns("isf"))
@@ -597,17 +668,66 @@ isf_server <- function(id) {
     # Helper: put id first, ISF-annotation second, then dppm/drt.
     .reorder_isf_cols <- function(df) {
       lead <- intersect(
-        c("id", "ISF_annotation", "ISF_dppm", "ISF_drt"),
+        c("id", "ISF_annotation", "ISF_dDa", "ISF_drt", "ISF_ratio",
+          "ISF_NL_annotation", "ISF_NL_type", "ISF_NL_dDa", "ISF_NL_drt",
+          "ISF_NL_ratio", "Adduct_annotation", "Adduct_type"),
         names(df))
       df[, c(lead, setdiff(names(df), lead)), drop = FALSE]
     }
 
+    # Track the currently displayed table_selected view so we can map
+    # DT row-selection events back to feature keys.
+    table_selected_view <- reactiveVal(NULL)
+
     output$table_selected <- DT::renderDT({
-      req(vals$df_filtered); keys <- selected_keys()
-      df <- if(length(keys)) vals$df_filtered[vals$df_filtered$.key %in% keys, ] else vals$df_filtered
-      df <- .reorder_isf_cols(as.data.frame(df))
-      DT::datatable(df, options = list(scrollX = TRUE), rownames = FALSE)
+      req(vals$df_filtered)
+      keys <- sel_keys_rv()
+      src  <- isolate(sel_source())
+      df_all <- .reorder_isf_cols(as.data.frame(vals$df_filtered))
+      key_col <- if (".key" %in% names(df_all)) ".key" else "id"
+
+      # Plot-driven selection: FILTER table to selected rows only.
+      # Table-driven selection (or no selection): show ALL rows.
+      if (length(keys) && identical(src, "plot")) {
+        df <- df_all[as.character(df_all[[key_col]]) %in% keys, , drop = FALSE]
+        pre_sel <- seq_len(nrow(df))
+      } else {
+        df <- df_all
+        pre_sel <- if (length(keys))
+          which(as.character(df[[key_col]]) %in% keys)
+        else
+          integer(0)
+      }
+      table_selected_view(df)
+
+      DT::datatable(df,
+                    rownames = FALSE,
+                    selection = list(mode = "multiple",
+                                     selected = pre_sel),
+                    options = list(scrollX = TRUE,
+                                   pageLength = 25,
+                                   deferRender = TRUE,
+                                   processing  = TRUE,
+                                   lengthMenu  = c(10, 25, 50, 100, 250)))
     })
+
+    # Table -> plot: user picking rows in table_selected pushes the
+    # selection back into sel_keys_rv. A setequal() guard prevents the
+    # observer from re-firing when the table pre-selects rows to mirror
+    # a plot pick.
+    observeEvent(input$table_selected_rows_selected, {
+      view <- table_selected_view()
+      if (is.null(view) || !nrow(view)) return()
+      rows <- input$table_selected_rows_selected
+      key_col <- if (".key" %in% names(view)) ".key" else "id"
+      new_keys <- if (length(rows)) unique(as.character(view[[key_col]][rows]))
+                  else character(0)
+      if (!setequal(new_keys, sel_keys_rv())) {
+        sel_source("table")
+        sel_keys_rv(new_keys)
+        sel_gen_isf(sel_gen_isf() + 1L)
+      }
+    }, ignoreNULL = FALSE, ignoreInit = TRUE)
     
     # Track the currently displayed ISF_table view so cell edits can be
     # mapped back to the master annotated data frame by row key.
@@ -619,9 +739,12 @@ isf_server <- function(id) {
         incProgress(0.3, detail = sprintf("Filtering %s features (%s)...",
                                           format(nrow(df), big.mark = " "),
                                           input$table_filter))
+        is_frag_row <- if ("ISF_annotation"    %in% names(df)) df$ISF_annotation    != "not ISF" else rep(FALSE, nrow(df))
+        is_nl_row   <- if ("ISF_NL_annotation" %in% names(df)) df$ISF_NL_annotation != "not ISF" else rep(FALSE, nrow(df))
+        is_any_isf  <- is_frag_row | is_nl_row
         res <- switch(input$table_filter,
-                      "only include ISF" = df[df$ISF_annotation != "not ISF", ],
-                      "exclude ISF, keep non-ISF" = df[df$ISF_annotation == "not ISF", ],
+                      "only include ISF" = df[is_any_isf, ],
+                      "exclude ISF, keep non-ISF" = df[!is_any_isf, ],
                       df)
 
         incProgress(0.3, detail = sprintf("Preparing %s rows for display...",
@@ -681,7 +804,12 @@ isf_server <- function(id) {
 
         # Merge annotation back to original data to preserve all columns
         out <- vals$orig_df
-        out$ISF_annotation <- res_df$ISF_annotation
+        for (cn in c("ISF_annotation", "ISF_dDa", "ISF_drt", "ISF_ratio",
+                     "ISF_NL_annotation", "ISF_NL_type", "ISF_NL_dDa",
+                     "ISF_NL_drt", "ISF_NL_ratio",
+                     "Adduct_annotation", "Adduct_type")) {
+          if (!is.null(res_df[[cn]])) out[[cn]] <- res_df[[cn]]
+        }
 
         data.table::fwrite(out, file)
       }
@@ -693,103 +821,331 @@ isf_server <- function(id) {
         req(vals$df_filtered)
         keys <- selected_keys()
         out <- if(length(keys)) vals$df_filtered[vals$df_filtered$.key %in% keys, ] else vals$df_filtered
-        if (isTRUE(input$cleanup_isf_export) && "ISF_annotation" %in% names(out)) {
-          out <- out[out$ISF_annotation == "not ISF", ]
+        if (isTRUE(input$cleanup_isf_export)) {
+          is_frag_out <- if ("ISF_annotation"    %in% names(out)) out$ISF_annotation    != "not ISF" else FALSE
+          is_nl_out   <- if ("ISF_NL_annotation" %in% names(out)) out$ISF_NL_annotation != "not ISF" else FALSE
+          out <- out[!(is_frag_out | is_nl_out), , drop = FALSE]
         }
         data.table::fwrite(out, file)
       }
     )
     
     # Network Plot (linked via crosstalk to the two scatter plots)
+    # Full re-render on selection change: selected features are drawn
+    # ONLY on the yellow "Selected" trace, unselected features stay on
+    # their category trace at a dimmed opacity while a selection exists,
+    # and full opacity otherwise. No proxy needed — no compounding.
     output$isf_network_plot <- plotly::renderPlotly({
       sel_gen_isf()  # re-render on selection reset
       req(vals$df_filtered); df <- vals$df_filtered
+      sel_keys <- sel_keys_rv()
+      has_sel  <- length(sel_keys) > 0L
+      dim_op   <- if (has_sel) 0.3 else 1
       withProgress(message = "Rendering ISF network...", value = 0, {
         incProgress(0.1, detail = sprintf("Applying sample filter to %s features...",
                                           format(nrow(df), big.mark = " ")))
         df <- .apply_col_filter(df, input$filter_col)
         if (!nrow(df)) return(plotly::plot_ly() %>%
                                 plotly::layout(title = "No features with data in chosen column"))
-        not_isf <- df[df$ISF_annotation == "not ISF", ]
-        is_isf  <- df[df$ISF_annotation != "not ISF", ]
+        # Ensure columns exist even if legacy annotation.
+        if (is.null(df$ISF_NL_annotation)) df$ISF_NL_annotation <- "not ISF"
+        if (is.null(df$Adduct_annotation)) df$Adduct_annotation <- "no adduct"
 
-        if (nrow(is_isf) == 0) return(NULL)
+        # Category priority: Both (frag+NL) > Fragment-ISF > NL-ISF > everything else.
+        # Adducts no longer have their own network category - they are folded
+        # into the "Precursor / clean" pool so referenced-as-precursor adduct
+        # features still appear on the plot.
+        has_frag  <- df$ISF_annotation    != "not ISF"
+        has_nl    <- df$ISF_NL_annotation != "not ISF"
+        is_both   <- has_frag & has_nl
+        is_frag   <- has_frag & (!has_nl)
+        is_nl     <- (!has_frag) & has_nl
+        is_clean  <- (!has_frag) & (!has_nl)
+
+        not_isf  <- df[is_clean, ]    # precursor / clean pool (incl. adducts)
+        is_isf   <- df[is_frag,  ]    # fragment-only ISF
+        nl_isf   <- df[is_nl,    ]    # NL-only ISF
+        both_df  <- df[is_both,  ]    # both fragment + NL
+
+        if (nrow(is_isf) + nrow(nl_isf) + nrow(both_df) == 0)
+          return(NULL)
 
         # If the user only wants matched pairs, restrict `not_isf` (precursors)
-        # to those actually referenced by an ISF feature's annotation.
+        # to those referenced by any ISF (fragment or NL) feature's annotation.
+        # Compare as CHARACTER so we work with numeric or string ids alike.
         if (isTRUE(input$net_only_matches)) {
-          annot_ids_all <- sub("^ISF of ID\\s*", "", is_isf$ISF_annotation)
-          referenced <- suppressWarnings(as.numeric(unlist(
-            strsplit(annot_ids_all, "\\s*,\\s*"), use.names = FALSE)))
-          referenced <- unique(referenced[!is.na(referenced)])
-          not_isf <- not_isf[not_isf$id %in% referenced, , drop = FALSE]
+          annot_ids_all <- c(
+            sub("^ISF of ID\\s*", "", is_isf$ISF_annotation),
+            sub("^ISF of ID\\s*", "", nl_isf$ISF_NL_annotation),
+            sub("^ISF of ID\\s*", "", both_df$ISF_annotation),
+            sub("^ISF of ID\\s*", "", both_df$ISF_NL_annotation)
+          )
+          referenced <- trimws(unlist(strsplit(annot_ids_all, "\\s*,\\s*"),
+                                      use.names = FALSE))
+          referenced <- unique(referenced[nzchar(referenced) &
+                                          referenced != "Unknown" &
+                                          referenced != "NA"])
+          not_isf <- not_isf[as.character(not_isf$id) %in% referenced, , drop = FALSE]
           incProgress(0, detail = sprintf("Only-matches: kept %s precursors referenced by ISF features.",
                                           format(nrow(not_isf), big.mark = " ")))
         }
 
         incProgress(0.3, detail = sprintf(
-          "Building edges for %s ISF features (against %s non-ISF)...",
+          "Building edges for %s fragment + %s NL + %s both ISF features...",
           format(nrow(is_isf),  big.mark = " "),
-          format(nrow(not_isf), big.mark = " ")))
-        annot_ids <- sub("^ISF of ID\\s*", "", is_isf$ISF_annotation)
-        id_lists  <- strsplit(annot_ids, "\\s*,\\s*")
-        lens      <- lengths(id_lists)
+          format(nrow(nl_isf),  big.mark = " "),
+          format(nrow(both_df), big.mark = " ")))
 
-        from_row  <- rep(seq_len(nrow(is_isf)), lens)
-        to_id_raw <- suppressWarnings(as.numeric(unlist(id_lists, use.names = FALSE)))
-        to_idx    <- match(to_id_raw, df$id)
-        ok        <- !is.na(to_idx) & !is.na(to_id_raw)
-
-        if (any(ok)) {
+        # Helper to build (lx, ly) edge coords for a source frame
+        # against precursor ids in `annot_col`.
+        .build_edges <- function(src, annot_col) {
+          if (!nrow(src)) return(list(lx = numeric(0), ly = numeric(0)))
+          annot_ids <- sub("^ISF of ID\\s*", "", src[[annot_col]])
+          id_lists  <- strsplit(annot_ids, "\\s*,\\s*")
+          lens      <- lengths(id_lists)
+          from_row  <- rep(seq_len(nrow(src)), lens)
+          to_id_raw <- suppressWarnings(as.numeric(unlist(id_lists, use.names = FALSE)))
+          to_idx    <- match(to_id_raw, df$id)
+          ok        <- !is.na(to_idx) & !is.na(to_id_raw)
+          if (!any(ok)) return(list(lx = numeric(0), ly = numeric(0)))
           from_row <- from_row[ok]; to_idx <- to_idx[ok]
-          max_edges <- 50000L
-          n_edges   <- length(from_row)
-          edge_note <- NULL
-          if (n_edges > max_edges) {
-            samp <- sample.int(n_edges, max_edges)
-            from_row <- from_row[samp]; to_idx <- to_idx[samp]
-            edge_note <- sprintf(" (showing %s of %s edges)",
-                                 format(max_edges, big.mark = ","),
-                                 format(n_edges,   big.mark = ","))
-          }
-          incProgress(0.3, detail = sprintf(
-            "Assembling %s edge segments%s...",
-            format(length(from_row), big.mark = " "),
-            if (is.null(edge_note)) "" else edge_note))
-          lx <- as.vector(rbind(is_isf$rt[from_row], df$rt[to_idx], NA_real_))
-          ly <- as.vector(rbind(is_isf$mz[from_row], df$mz[to_idx], NA_real_))
-        } else {
-          lx <- numeric(0); ly <- numeric(0)
-          edge_note <- NULL
+          list(
+            lx = as.vector(rbind(src$rt[from_row], df$rt[to_idx], NA_real_)),
+            ly = as.vector(rbind(src$mz[from_row], df$mz[to_idx], NA_real_))
+          )
+        }
+
+        e_frag      <- .build_edges(is_isf,  "ISF_annotation")
+        e_nl        <- .build_edges(nl_isf,  "ISF_NL_annotation")
+        e_both_frag <- .build_edges(both_df, "ISF_annotation")
+        e_both_nl   <- .build_edges(both_df, "ISF_NL_annotation")
+
+        # Cap total edges for perf.
+        max_edges <- 50000L
+        n_edges_pairs <- (length(e_frag$lx) + length(e_nl$lx)) %/% 3L
+        edge_note <- NULL
+        if (n_edges_pairs > max_edges) {
+          edge_note <- sprintf(" (capped edges at %s)",
+                               format(max_edges, big.mark = ","))
         }
 
         incProgress(0.3, detail = "Drawing traces...")
-        sd_not <- crosstalk::SharedData$new(not_isf, key = ~.key, group = ns("isf"))
-        sd_isf <- crosstalk::SharedData$new(is_isf,  key = ~.key, group = ns("isf"))
 
-      plot_ly(source = ns("isfnet")) %>%
-        add_trace(type = "scattergl", mode = "lines", x = lx, y = ly,
-                  line = list(color = "rgba(120,120,120,0.4)", width = 1),
+        # Partition each category by the current selection.
+        not_sel  <- not_isf$.key %in% sel_keys
+        isf_sel  <- is_isf$.key  %in% sel_keys
+        nl_sel   <- nl_isf$.key  %in% sel_keys
+        both_sel <- both_df$.key %in% sel_keys
+        un_not  <- not_isf[!not_sel , , drop = FALSE]
+        un_isf  <- is_isf [!isf_sel , , drop = FALSE]
+        un_nl   <- nl_isf [!nl_sel  , , drop = FALSE]
+        un_both <- both_df[!both_sel, , drop = FALSE]
+        se_df   <- rbind(not_isf [ not_sel , , drop = FALSE],
+                         is_isf  [ isf_sel , , drop = FALSE],
+                         nl_isf  [ nl_sel  , , drop = FALSE],
+                         both_df [ both_sel, , drop = FALSE])
+
+        sd_not  <- crosstalk::SharedData$new(un_not , key = ~.key, group = ns("isf"))
+        sd_isf  <- crosstalk::SharedData$new(un_isf , key = ~.key, group = ns("isf"))
+        sd_nl   <- crosstalk::SharedData$new(un_nl  , key = ~.key, group = ns("isf"))
+        sd_both <- crosstalk::SharedData$new(un_both, key = ~.key, group = ns("isf"))
+
+      p <- plot_ly(source = ns("isfnet")) %>%
+        add_trace(type = "scattergl", mode = "lines",
+                  x = e_frag$lx, y = e_frag$ly,
+                  line = list(color = "rgba(213,94,0,0.35)", width = 1),
+                  showlegend = FALSE, hoverinfo = "skip") %>%
+        add_trace(type = "scattergl", mode = "lines",
+                  x = e_nl$lx, y = e_nl$ly,
+                  line = list(color = "rgba(0,158,115,0.35)", width = 1),
+                  showlegend = FALSE, hoverinfo = "skip") %>%
+        add_trace(type = "scattergl", mode = "lines",
+                  x = c(e_both_frag$lx, e_both_nl$lx),
+                  y = c(e_both_frag$ly, e_both_nl$ly),
+                  line = list(color = "rgba(120,94,240,0.45)", width = 1),
                   showlegend = FALSE, hoverinfo = "skip") %>%
         add_markers(data = sd_not, x = ~rt, y = ~mz, name = "Precursor / clean",
                     type = "scattergl",
-                    marker = list(color = "rgba(0, 114, 178, 0.7)", size = 8,
+                    marker = list(color = "rgba(0, 114, 178, 0.75)", size = 8,
+                                  opacity = dim_op,
                                   line = list(color = "rgba(0,0,0,0.35)", width = 0.4)),
                     hovertemplate = "id=%{customdata}<br>rt=%{x:.3f}<br>m/z=%{y:.4f}<extra></extra>",
                     customdata = ~id) %>%
-        add_markers(data = sd_isf, x = ~rt, y = ~mz, name = "Fragment / ISF",
+        add_markers(data = sd_isf, x = ~rt, y = ~mz, name = "ISF (fragment)",
                     type = "scattergl",
-                    marker = list(color = "#D55E00", size = 8, opacity = 0.9,
+                    marker = list(color = "rgba(213, 94, 0, 0.9)", size = 8,
+                                  opacity = dim_op,
                                   line = list(color = "#7a2f00", width = 0.5)),
                     hovertemplate = "id=%{customdata}<br>rt=%{x:.3f}<br>m/z=%{y:.4f}<extra></extra>",
                     customdata = ~id) %>%
+        add_markers(data = sd_nl, x = ~rt, y = ~mz, name = "ISF (neutral loss)",
+                    type = "scattergl",
+                    marker = list(color = "rgba(0, 158, 115, 0.9)", size = 8,
+                                  opacity = dim_op,
+                                  line = list(color = "#005c40", width = 0.5)),
+                    hovertemplate = "id=%{customdata}<br>rt=%{x:.3f}<br>m/z=%{y:.4f}<extra></extra>",
+                    customdata = ~id) %>%
+        add_markers(data = sd_both, x = ~rt, y = ~mz,
+                    name = "ISF (fragment + NL)",
+                    type = "scattergl",
+                    marker = list(color = "rgba(120, 94, 240, 0.95)", size = 9,
+                                  opacity = dim_op,
+                                  line = list(color = "#3d2f80", width = 0.6)),
+                    hovertemplate = "id=%{customdata}<br>rt=%{x:.3f}<br>m/z=%{y:.4f}<extra></extra>",
+                    customdata = ~id) %>%
+        add_markers(x = se_df$rt, y = se_df$mz,
+                    name = "Selected",
+                    type = "scatter", mode = "markers",
+                    marker = list(color = mzx_highlight_color, size = 8, opacity = 0.95,
+                                  line = list(color = "#8a7a00", width = 1.2)),
+                    hovertemplate = "id=%{customdata}<br>rt=%{x:.3f}<br>m/z=%{y:.4f}<extra></extra>",
+                    customdata = if (nrow(se_df)) se_df$id else integer(0),
+                    inherit = FALSE, showlegend = has_sel) %>%
         mzx_style(xtitle = "Retention time",
                   ytitle = "m/z",
                   title  = paste0("ISF network (m/z vs. RT)",
                                   if (!is.null(edge_note)) edge_note else "")) %>%
-        plotly::highlight(on = "plotly_selected", off = "plotly_deselect",
-                          color = I(mzx_highlight_color), opacityDim = 0.25)
+        plotly::layout(dragmode = "select")
+      p
       })  # close withProgress
+    })
+
+    # (ISF network selection visuals are handled by full re-render above.)
+
+    # --- ISF intensity ratio vs. RT plot ---
+    # One point per (fragment, precursor) pair. Fragment ISF and NL ISF are
+    # color-coded to match the network plot; features tagged as BOTH
+    # fragment + NL contribute one point per source (fragment source in
+    # the "Both (fragment)" bucket, NL source in "Both (NL)").
+    # Adducts are excluded (they are not fragmentation pairs).
+    output$isf_ratio_plot <- plotly::renderPlotly({
+      req(vals$df_filtered); df <- vals$df_filtered
+      df <- .apply_col_filter(df, input$filter_col)
+      if (!nrow(df)) return(NULL)
+      if (is.null(df$ISF_ratio))         df$ISF_ratio         <- NA_character_
+      if (is.null(df$ISF_NL_annotation)) df$ISF_NL_annotation <- "not ISF"
+      if (is.null(df$ISF_NL_ratio))      df$ISF_NL_ratio      <- NA_character_
+      if (is.null(df$Adduct_annotation)) df$Adduct_annotation <- "no adduct"
+
+      # Explode a (annotation, ratio) pair into long rows. Each output
+      # row carries `.key` = the fragment feature's key so the ratio-plot
+      # box-select can push directly into `sel_keys_rv`.
+      .explode <- function(rows, annot_col, ratio_col, kind) {
+        if (!length(rows)) return(NULL)
+        ids_raw <- sub("^ISF of ID\\s*", "", df[[annot_col]][rows])
+        id_lists <- strsplit(ids_raw, "\\s*,\\s*")
+        r_lists  <- strsplit(df[[ratio_col]][rows] %||% "", "\\s*,\\s*")
+        data.table::rbindlist(lapply(seq_along(rows), function(k) {
+          ids <- suppressWarnings(as.numeric(id_lists[[k]]))
+          rs  <- suppressWarnings(as.numeric(r_lists[[k]]))
+          if (!length(ids)) return(NULL)
+          if (length(rs) != length(ids)) rs <- rep(NA_real_, length(ids))
+          data.table::data.table(
+            .key      = df$.key[rows[k]],
+            frag_id   = df$id[rows[k]],
+            frag_rt   = df$rt[rows[k]],
+            precursor = ids,
+            ratio     = rs,
+            kind      = kind
+          )
+        }), use.names = TRUE, fill = TRUE)
+      }
+
+      # Category masks — exclude adducts entirely from the ratio plot.
+      not_ad    <- df$Adduct_annotation == "no adduct"
+      has_frag  <- df$ISF_annotation    != "not ISF"
+      has_nl    <- df$ISF_NL_annotation != "not ISF"
+      both_rows <- which(not_ad & has_frag &  has_nl)
+      frag_rows <- which(not_ad & has_frag & !has_nl)
+      nl_rows   <- which(not_ad & has_nl   & !has_frag)
+
+      pts <- data.table::rbindlist(list(
+        .explode(frag_rows, "ISF_annotation",    "ISF_ratio",    "Fragment"),
+        .explode(nl_rows,   "ISF_NL_annotation", "ISF_NL_ratio", "Neutral loss"),
+        .explode(both_rows, "ISF_annotation",    "ISF_ratio",    "Both (fragment)"),
+        .explode(both_rows, "ISF_NL_annotation", "ISF_NL_ratio", "Both (NL)")
+      ), use.names = TRUE, fill = TRUE)
+
+      if (!nrow(pts)) {
+        return(plot_ly() %>%
+          mzx_style(xtitle = "Retention time",
+                    ytitle = "ISF / precursor intensity ratio",
+                    title  = "No ISF pairs to display"))
+      }
+
+      pts <- pts[is.finite(ratio)]
+      pts$kind <- factor(pts$kind,
+                         levels = c("Fragment", "Neutral loss",
+                                    "Both (fragment)", "Both (NL)"))
+
+      col_map <- c(
+        "Fragment"               = "#D55E00",
+        "Neutral loss"           = "#009E73",
+        "Both (fragment)"        = "#785EF0",
+        "Both (NL)"              = "#785EF0"
+      )
+      legend_name <- c(
+        "Fragment"        = "Fragment",
+        "Neutral loss"    = "Neutral loss",
+        "Both (fragment)" = "Fragment + Neutral loss",
+        "Both (NL)"       = "Fragment + Neutral loss"
+      )
+      # Only show one legend entry for the "Both" category (from the
+      # first Both trace we draw); collapse into a legendgroup so
+      # toggling hides both point sets together.
+      shown_both <- FALSE
+
+      sel_keys <- sel_keys_rv()
+      has_sel  <- length(sel_keys) > 0
+      base_op  <- if (has_sel) 0.25 else 1
+
+      p <- plot_ly(source = ns("isfratio"))
+      for (k in levels(pts$kind)) {
+        sub <- pts[kind == k]
+        if (!nrow(sub)) next
+        is_both <- k %in% c("Both (fragment)", "Both (NL)")
+        show_leg <- if (is_both) { s <- !shown_both; shown_both <- TRUE; s } else TRUE
+        p <- p %>% add_trace(
+          data = as.data.frame(sub),
+          x = ~frag_rt, y = ~ratio,
+          key = ~.key,                 # emit .key in event_data
+          type = "scattergl", mode = "markers",
+          name = legend_name[[k]],
+          legendgroup = legend_name[[k]],
+          showlegend = show_leg,
+          opacity = base_op,
+          marker = list(color = col_map[[k]], size = 8,
+                        line = list(color = "rgba(0,0,0,0.4)", width = 0.5)),
+          text = ~paste0("frag id=", frag_id,
+                         "<br>precursor id=", precursor,
+                         "<br>ratio=", sprintf("%.2f", ratio),
+                         "<br>type=", k),
+          hoverinfo = "text"
+        )
+      }
+      if (has_sel) {
+        sel_pts <- pts[as.character(.key) %in% sel_keys]
+        if (nrow(sel_pts)) {
+          p <- p %>% add_trace(
+            data = as.data.frame(sel_pts),
+            x = ~frag_rt, y = ~ratio,
+            key = ~.key,
+            type = "scattergl", mode = "markers",
+            name = "Selected",
+            marker = list(color = mzx_highlight_color, size = 8,
+                          line = list(color = "rgba(0,0,0,0.7)", width = 1)),
+            text = ~paste0("frag id=", frag_id,
+                           "<br>precursor id=", precursor,
+                           "<br>ratio=", sprintf("%.2f", ratio),
+                           "<br>type=", kind),
+            hoverinfo = "text"
+          )
+        }
+      }
+      p %>% mzx_style(xtitle = "Retention time",
+                      ytitle = "ISF / precursor intensity ratio",
+                      title  = "ISF intensity ratio vs. RT") %>%
+        plotly::layout(dragmode = "select")
     })
 
     # --- Sample comparison ---
@@ -876,7 +1232,9 @@ isf_server <- function(id) {
 
 make_isf_scatter <- function(sd, xv, yv, sid,
                              intensity_enabled = FALSE,
-                             intensity_col = NULL) {
+                             intensity_col = NULL,
+                             show_legend = TRUE,
+                             sel_keys = NULL) {
   # Build truncated tick labels for any categorical (character/factor) axis
   # so that long values like "ISF of ID 130, 1450, 2201, ..." don't blow out
   # the plot area. Full text remains visible in the hover.
@@ -936,19 +1294,71 @@ make_isf_scatter <- function(sd, xv, yv, sid,
   yfmt <- if (is_num(yv)) "%{y:.4f}" else "%{y}"
 
   marker_spec <- list(size = point_sizes,
-                      color = "rgba(0, 114, 178, 0.7)",  # Okabe-Ito blue
+                      color = "rgba(0, 114, 178, 0.75)",  # Okabe-Ito blue (match MD)
                       line = list(color = "rgba(0,0,0,0.35)", width = 0.4))
   if (use_size) {
     marker_spec$sizemode <- "diameter"
     marker_spec$sizemin  <- 3
   }
-  p <- plot_ly(sd, x = as.formula(paste0("~", xv)), y = as.formula(paste0("~", yv)),
-          key = ~.key, source = sid, type = "scattergl", mode = "markers",
-          marker = marker_spec,
-          hovertemplate = paste0(xv, "=", xfmt, "<br>", yv, "=", yfmt, "<extra></extra>")) %>%
-    mzx_style(xtitle = xv, ytitle = yv, legend = FALSE) %>%
+
+  # Split into unselected ("All features") and selected ("Selected"),
+  # mirroring the MD scatter. When a selection exists, the base trace
+  # dims so the yellow Selected overlay stands out.
+  if (!is.null(df) && !is.null(sel_keys) && length(sel_keys) &&
+      ".key" %in% names(df)) {
+    is_sel <- as.character(df$.key) %in% as.character(sel_keys)
+  } else {
+    is_sel <- rep(FALSE, if (is.null(df)) 0 else nrow(df))
+  }
+  has_selection <- any(is_sel)
+  base_color <- if (has_selection) "rgba(0, 114, 178, 0.20)"
+                else                "rgba(0, 114, 178, 0.75)"
+  base_line  <- if (has_selection) "rgba(0,0,0,0.15)" else "rgba(0,0,0,0.35)"
+
+  df_unsel <- if (!is.null(df)) df[!is_sel, , drop = FALSE] else NULL
+  df_sel   <- if (!is.null(df)) df[ is_sel, , drop = FALSE] else NULL
+  sizes_unsel <- if (length(point_sizes) == 1) point_sizes else point_sizes[!is_sel]
+  sizes_sel   <- if (length(point_sizes) == 1) point_sizes else point_sizes[ is_sel]
+
+  marker_unsel <- list(size = sizes_unsel, color = base_color,
+                       line = list(color = base_line, width = 0.4))
+  marker_sel   <- list(size = sizes_sel,   color = mzx_highlight_color,
+                       line = list(color = "#8a7a00", width = 1.2))
+  if (use_size) {
+    marker_unsel$sizemode <- "diameter"; marker_unsel$sizemin <- 3
+    marker_sel$sizemode   <- "diameter"; marker_sel$sizemin   <- 3
+  }
+
+  p <- plotly::plot_ly(source = sid)
+  if (is.null(df_unsel) || nrow(df_unsel)) {
+    # Keep crosstalk wiring on the "All features" trace. When there is
+    # no selection this is the full data (sd); when there is, split the
+    # SharedData so the highlight from other plots still targets the
+    # correct rows.
+    sd_unsel <- if (has_selection)
+      crosstalk::SharedData$new(df_unsel, key = ~.key, group = sd$groupName())
+    else sd
+    p <- p %>% plotly::add_markers(
+      data = sd_unsel,
+      x = as.formula(paste0("~", xv)),
+      y = as.formula(paste0("~", yv)),
+      key = ~.key, type = "scattergl", mode = "markers",
+      name = "All features", showlegend = show_legend,
+      marker = marker_unsel,
+      hovertemplate = paste0(xv, "=", xfmt, "<br>", yv, "=", yfmt, "<extra></extra>"))
+  }
+  if (!is.null(df_sel) && nrow(df_sel)) {
+    p <- p %>% plotly::add_markers(
+      x = df_sel[[xv]], y = df_sel[[yv]],
+      type = "scattergl", mode = "markers",
+      name = "Selected", showlegend = show_legend,
+      marker = marker_sel, inherit = FALSE,
+      hovertemplate = paste0(xv, "=", xfmt, "<br>", yv, "=", yfmt, "<extra></extra>"))
+  }
+  p <- p %>%
+    mzx_style(xtitle = xv, ytitle = yv, legend = show_legend) %>%
     plotly::highlight(on = "plotly_selected", off = "plotly_deselect",
-                      color = I(mzx_highlight_color), opacityDim = 0.25)
+                      color = I(mzx_highlight_color), opacityDim = 0.30)
   if (!is.null(xaxis_ov)) p <- p %>% plotly::layout(xaxis = xaxis_ov)
   if (!is.null(yaxis_ov)) p <- p %>% plotly::layout(yaxis = yaxis_ov)
   p
