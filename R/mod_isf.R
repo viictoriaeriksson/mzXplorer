@@ -679,15 +679,28 @@ isf_server <- function(id) {
     # DT row-selection events back to feature keys.
     table_selected_view <- reactiveVal(NULL)
 
+    # Snapshot of the plot-driven selection state. Only updates when the
+    # selection came from the plot (or a reset) - NEVER when the user
+    # clicked rows in the table itself. renderDT depends on this
+    # snapshot instead of sel_keys_rv() directly, so clicking table rows
+    # will NOT cause the table to re-render/repaginate.
+    plot_sel_snapshot <- reactiveVal(list(keys = character(0), src = "init"))
+    observeEvent(sel_keys_rv(), {
+      if (!identical(sel_source(), "table")) {
+        plot_sel_snapshot(list(keys = sel_keys_rv(), src = sel_source()))
+      }
+    }, ignoreNULL = FALSE, ignoreInit = TRUE)
+
     output$table_selected <- DT::renderDT({
       req(vals$df_filtered)
-      keys <- sel_keys_rv()
-      src  <- isolate(sel_source())
+      snap <- plot_sel_snapshot()
+      keys <- snap$keys
+      src  <- snap$src
       df_all <- .reorder_isf_cols(as.data.frame(vals$df_filtered))
       key_col <- if (".key" %in% names(df_all)) ".key" else "id"
 
       # Plot-driven selection: FILTER table to selected rows only.
-      # Table-driven selection (or no selection): show ALL rows.
+      # Otherwise (initial state or reset): show ALL rows.
       if (length(keys) && identical(src, "plot")) {
         df <- df_all[as.character(df_all[[key_col]]) %in% keys, , drop = FALSE]
         pre_sel <- seq_len(nrow(df))

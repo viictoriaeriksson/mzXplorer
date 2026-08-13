@@ -136,18 +136,28 @@ section.
 | CCS mode | RT only / CCS only / Both |
 | CCS tolerance | max CCS difference per step |
 
-##### The algorithm performs:
+##### How the algorithm finds series
 
-1.  **Candidate edges** via mass defect + optional RT restrictions (`build_edges()`).
-2.  **Graph construction** (`build_graph()`).
-3.  **Connected components** → provisional series.
-4.  **Monotonicity filtering** (`strict_rt_filter()`):
-    -   RT monotonicity\
-    -   CCS monotonicity\
-    -   CCS tolerance\
-5.  **Minimum length** check.\
-6.  **Chromatographic smoothness** (`apply_shiny_splines()`).
-7.  Final renumbering of surviving series.
+1.  **Mass‑step window.** A tolerance band is placed around the exact
+    mass of the repeating unit (the larger of the ppm error and a
+    small absolute floor). If **Allow gaps** is on, the same window is
+    also applied at twice the unit mass.
+2.  **Pairwise linking.** Every pair of features whose m/z difference
+    falls inside that window is linked as one step of the unit.
+3.  **RT / CCS gating.** A link is kept only if the two features are
+    within **RT tolerance** (and, if selected, follow the requested RT
+    or CCS trend).
+4.  **Grouping.** Transitively linked features form one provisional
+    series.
+5.  **Trend filter.** Within each series, any feature that breaks the
+    requested monotonic RT (or CCS) trend is removed.
+6.  **Length filter.** Series shorter than **Minimum length** are
+    discarded; the rest are renumbered.
+
+Because a step of the unit in m/z corresponds to a fixed shift in
+Kendrick mass, the resulting series are exactly the features that
+would fall on the same horizontal line in a Kendrick mass‑defect plot
+for the same base unit.
 _____________________________________________________________________
 
 ##### CCS‑Aware Monotonicity
@@ -161,16 +171,16 @@ When CCS support is enabled, the user may choose:
 
 **CCS only**
 
--   CCS monotonicity enforced\
--   RT ignored\
+-   CCS monotonicity enforced
+-   RT ignored
 -   optional CCS tolerance filter
 
 **Both RT + CCS**
 
 A point must satisfy:
 
--   RT monotonicity *and*\
--   CCS monotonicity *and*, if enabled\
+-   RT monotonicity *and*
+-   CCS monotonicity *and*, if enabled
 -   CCS tolerance per step
 
 Ideal for LC‑IM‑HRMS workflows.
@@ -178,9 +188,9 @@ _____________________________________________________________________
 
 Homologue table list all series passing the filters and includes:
 
--   `series_id`, `n`\
--   `mz_min`, `mz_max`\
--   `rt_min`, `rt_max`\
+-   `series_id`, `n`
+-   `mz_min`, `mz_max`
+-   `rt_min`, `rt_max`
 -   `int_sum`
 -   `ccs_min`, `ccs_max`, `ccs_range` (if CCS is present)
 
@@ -253,11 +263,13 @@ The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown 
 
 <p><b>OMD</b> — original mass defect</p>
 
-<p>$$ \text{OMD} = \text{round}(m) - m $$</p>
+<p>$$ \text{OMD (mDa)} = (\text{round}(m) - m) \times 10^{3} $$</p>
+
+<p>(The OMD column is reported in milli‑Daltons — i.e. the raw mass defect is multiplied by $10^{3}$ and then rounded to the nearest integer using round‑half‑away‑from‑zero.)</p>
 
 <p><b>RMD</b> — relative mass defect</p>
 
-<p>$$ \text{RMD} = \frac{\text{round}(m) - m}{m} \times 10^{6} $$</p>
+<p>$$ \text{RMD (ppm)} = \frac{\text{round}(m) - m}{m} \times 10^{6} $$</p>
 
 <p><b>MD1</b> — first‑order MD with unit $u_1$</p>
 
