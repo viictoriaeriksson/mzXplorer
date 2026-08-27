@@ -6,7 +6,7 @@ mass_defect_ui <- function(id) {
     sidebarLayout(
       sidebarPanel(
         checkboxInput(ns("show_isf_tab"), "Show ISF analysis tab", FALSE),
-        fileInput(ns('file1'), 'Choose Feature File (CSV / Excel)',
+        fileInput(ns('file1'), 'Choose Feature File (.csv / .xlsx / .xls)',
                   accept = c('.csv', '.xlsx', '.xls',
                              'text/csv', 'text/comma-separated-values,text/plain',
                              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -40,7 +40,16 @@ mass_defect_ui <- function(id) {
                 uiOutput(ns("slide1")),
                 uiOutput(ns("slide2")),
                 uiOutput(ns("slide3")),
-                actionButton(ns('go'), 'Plot', width = "100%", class = "btn-primary")
+                actionButton(ns('go'), 'Plot', width = "100%", class = "btn-primary"),
+                tags$br(), tags$br(),
+                tags$button("Reload session",
+                            id = ns("reload_session_md"),
+                            class = "btn btn-outline-danger btn-sm",
+                            style = "width:100%;",
+                            onclick = "window.location.reload(true); return false;",
+                            title = "Force-reload the app if something is stuck. Discards all state."),
+                tags$small(style = "color:#777;",
+                           "Force-reloads the app if a run is stuck or unresponsive. All state (uploads, results, selections) will be discarded.")
               )
             ),
             tabPanel("Column Mapping",
@@ -70,18 +79,12 @@ mass_defect_ui <- function(id) {
               numericInput(ns("homol_R2"), "Minimum spline R² (0 = off)", value = 0.98, min = 0, max = 1, step = 0.01),
               actionButton(ns("go_homol"), "Calculate homologues", width = "100%", class = "btn-secondary"),
               fluidRow(style = "margin-top:6px;",
-                column(6, actionButton(ns("cancel_homol"), "Cancel",
+                column(12, actionButton(ns("cancel_homol"), "Cancel",
                                        class = "btn-outline-warning btn-sm",
-                                       width = "100%")),
-                column(6, tags$button("Reload session",
-                                       id = ns("reload_session_md"),
-                                       class = "btn btn-outline-danger btn-sm",
-                                       style = "width:100%;",
-                                       onclick = "window.location.reload(true); return false;",
-                                       title = "Force-reload if a run is stuck. Works even while R is busy."))
+                                       width = "100%"))
               ),
               tags$small(style = "color:#777;",
-                         "Cancel halts before the next processing phase; the graph search itself cannot be interrupted mid-run.To fully interupt use Reload session")
+                         "Cancel halts before the next processing phase; the graph search itself cannot be interrupted mid-run.")
             )
           )
         ),
@@ -94,13 +97,13 @@ mass_defect_ui <- function(id) {
             checkboxInput(ns("enable_md_diff"), "Calculate Mass Defect Differences", value = FALSE),
             conditionalPanel(
               condition = sprintf("input['%s'] == true", ns("enable_md_diff")),
-              textInput(ns("md_values"), "Mass Defect Differences, mDa (comma-separated)",
-                        value = "-5.1, -15.7, 32.1",
-                        placeholder = "e.g., -5.1, -15.7, -23.5, 32.1, -43.2, 68.2"),
+              textInput(ns("md_values"), "Mass Defect Differences, mDa (integers, comma-separated)",
+                        value = "-5, -16, 32",
+                        placeholder = "e.g., -5, -16, -24, 32, -43, 68"),
               textInput(ns("mz_values"), "m/z Differences, Da (comma-separated)",
                         value = "15.9949, -2.0157, 176.0321",
                         placeholder = "e.g., 15.9949, -2.0157, -15.0235, 176.0321, 79.9568, 305.0682"),
-              numericInput(ns("MZtolerance"), "m/z difference tolerance (Da)", value = 0.5, min = 0, step = 0.1),
+              numericInput(ns("MZtolerance"), "m/z difference tolerance (Da)", value = 0.01, min = 0, step = 0.01),
               actionButton(ns("MDcalculate"), "Calculate MD/mz Differences", width = "100%", class = "btn-warning")
             )
           )
@@ -137,7 +140,7 @@ mass_defect_ui <- function(id) {
           id = ns("result_sections"),
           type = "tabs",
           tabPanel(
-            "Plot & Table", value = "Plot_Table",
+            "Mass Defect", value = "Plot_Table",
             div(class = "mzx-pane mzx-plot",
               tags$h4("Interactive Plots to explore MD data"),
               uiOutput(ns("plotctr")),
@@ -363,15 +366,25 @@ mass_defect_server <- function(id) {
       if (!"id" %in% names(df)) df$id <- seq_len(nrow(df))
 
       df$RMD_ppm <- round((round(df$mz) - df$mz) / df$mz * 1e6)
-      df$OMD_mDa <- round((round(df$mz) - df$mz) * 1e3)
+      # OMD is stored as an INTEGER mDa using "round half away from
+      # zero" (sign(x) * floor(abs(x) + 0.5)). This is the single
+      # source of truth for both:
+      #   - the OMD column shown in every table (no client-side rounding)
+      #   - the integer-mDa matching in the MD/m/z difference algorithm
+      # Using R's default round() (banker's / round half to even) here
+      # would silently disagree with the display for exact-half values
+      # such as -136.5 (banker's gives -136, display shows -137) and
+      # produce phantom pairs.
+      raw_omd <- (round(df$mz) - df$mz) * 1e3
+      df$OMD_mDa <- as.integer(sign(raw_omd) * floor(abs(raw_omd) + 0.5))
       df
     })
     
     MD_data_raw <- eventReactive(input$go_process, {
       df <- raw_file()
       withProgress(message = "Applying MD formulas...", value = 0.3, {
-        mdh1 <- enviGCMS::getmdh(df$mz, cus = input$cus1, method = input$rounding)
-        mdh2 <- enviGCMS::getmdh(df$mz, cus = input$cus2, method = input$rounding)
+        mdh1 <- getmdh(df$mz, cus = input$cus1, method = input$rounding)
+        mdh2 <- getmdh(df$mz, cus = input$cus2, method = input$rounding)
 
         mdh  <- cbind(mdh1[, -1, drop=FALSE], mdh2[, -1, drop=FALSE])
         colnames(mdh) <- c(paste0("Formula1_", colnames(mdh1))[-1],
@@ -453,6 +466,12 @@ mass_defect_server <- function(id) {
                                     layout(title = "No features with data in chosen column"))
           d_f <- crosstalk::SharedData$new(as.data.frame(m_f),
                                            key = ~.key, group = ns("md"))
+          # Read (NOT isolate) the current lasso selection so the plot
+          # redraws its overlay whenever the selection changes. This makes
+          # a new lasso in a different sample REPLACE the previous overlay
+          # rather than accumulate stale "Selected" markers under a
+          # mismatched "All features" client-side highlight.
+          sel_snapshot <- sel_keys_rv()
           # Sizing settings are captured at the moment of the Plot click
           # (via isolate) so that toggling the "Show intensity as size"
           # checkbox afterwards does NOT re-render the plots; the user has
@@ -464,7 +483,8 @@ mass_defect_server <- function(id) {
           }
           make_mdplot(d_f, input$xvar1, input$yvar1, input$xvar1, input$yvar1,
                       ins_flag, i_col,
-                      vals$series_sel, vals$series_cols, input$show_leg, ns("plot1"))
+                      vals$series_sel, vals$series_cols, input$show_leg, ns("plot1"),
+                      sel_keys = sel_snapshot)
         })
         output$DTPlot2 <- plotly::renderPlotly({
           req(vals$m)
@@ -473,6 +493,7 @@ mass_defect_server <- function(id) {
                                     layout(title = "No features with data in chosen column"))
           d_f <- crosstalk::SharedData$new(as.data.frame(m_f),
                                            key = ~.key, group = ns("md"))
+          sel_snapshot <- sel_keys_rv()
           ins_flag <- isolate(input$ins)
           i_col    <- isolate(input$selectintensity)
           if (is.null(i_col) || !nzchar(i_col) || !(i_col %in% names(m_f))) {
@@ -480,7 +501,8 @@ mass_defect_server <- function(id) {
           }
           make_mdplot(d_f, input$xvar2, input$yvar2, input$xvar2, input$yvar2,
                       ins_flag, i_col,
-                      vals$series_sel, vals$series_cols, input$show_leg, ns("plot2"))
+                      vals$series_sel, vals$series_cols, input$show_leg, ns("plot2"),
+                      sel_keys = sel_snapshot)
         })
       })
     })
@@ -630,7 +652,7 @@ mass_defect_server <- function(id) {
                  ignoreNULL = FALSE, ignoreInit = TRUE)
 
     observeEvent(input$reset_sel_md, {
-      sel_source("reset")
+      sel_source("plot")
       sel_keys_rv(character(0))
       if (!is.null(vals$m)) {
         vals$d <- crosstalk::SharedData$new(as.data.frame(vals$m),
@@ -644,7 +666,7 @@ mass_defect_server <- function(id) {
 
     # Same reset behavior wired to the button under the MD network plot
     observeEvent(input$reset_sel_mdnet, {
-      sel_source("reset")
+      sel_source("plot")
       sel_keys_rv(character(0))
       if (!is.null(vals$m)) {
         vals$d <- crosstalk::SharedData$new(as.data.frame(vals$m),
@@ -662,13 +684,48 @@ mass_defect_server <- function(id) {
       sel_keys_rv()
     })
     
+    # View cache so a row-selection event can be mapped back to .keys.
+    table_selected_view <- reactiveVal(NULL)
+
+    # Snapshot of the plot-driven selection state. Only updates when the
+    # selection came from the plot (or a reset) - NEVER when the user
+    # clicked rows in the table itself. renderDT depends on this
+    # snapshot instead of sel_keys_rv() directly, so clicking table rows
+    # will NOT cause the table to re-render/repaginate.
+    md_plot_sel_snapshot <- reactiveVal(list(keys = character(0), src = "init"))
+    observeEvent(sel_keys_rv(), {
+      if (!identical(sel_source(), "table")) {
+        md_plot_sel_snapshot(list(keys = sel_keys_rv(), src = sel_source()))
+      }
+    }, ignoreNULL = FALSE, ignoreInit = TRUE)
+
+    # Same pattern for the MD/m/z-differences feature_table (defined
+    # further down). Separate reactiveVal so each table's render
+    # dependency graph stays independent.
+    ft_plot_sel_snapshot <- reactiveVal(list(keys = character(0), src = "init"))
+    observeEvent(sel_keys_rv(), {
+      if (!identical(sel_source(), "table")) {
+        ft_plot_sel_snapshot(list(keys = sel_keys_rv(), src = sel_source()))
+      }
+    }, ignoreNULL = FALSE, ignoreInit = TRUE)
+
     output$table_selected <- DT::renderDT({
-      req(vals$m); sel_keys <- selected_keys()
+      req(vals$m)
+      snap <- md_plot_sel_snapshot()
+      sel_keys <- snap$keys
+      src      <- snap$src
       # Coerce to data.frame first so downstream subsetting is not affected by
       # data.table semantics (which reject `[, cols]` with a character vector
       # and ignore `drop = FALSE`).
-      df <- as.data.frame(vals$m)
-      if (length(sel_keys)) df <- df[df$.key %in% sel_keys, , drop = FALSE]
+      df_all <- as.data.frame(vals$m)
+
+      # Plot-driven selection: filter table to selected rows only.
+      # Otherwise (initial or reset): show ALL rows.
+      if (length(sel_keys) && identical(src, "plot")) {
+        df <- df_all[df_all$.key %in% sel_keys, , drop = FALSE]
+      } else {
+        df <- df_all
+      }
 
       # Reorder columns: identity first, then MD-derived columns,
       # then homologue/CCS-related, then everything else. Drop the
@@ -680,11 +737,48 @@ mass_defect_server <- function(id) {
       series_cols_v <- intersect(c("series_id", "series_unit", "ccs"), nms)
       leading       <- unique(c(identity_cols, md_cols, formula_cols, series_cols_v))
       trailing      <- setdiff(nms, leading)
-      df <- df[, c(leading, trailing), drop = FALSE]
+      df <- df[, c(".key", leading, trailing), drop = FALSE]
 
-      DT::datatable(df, editable = TRUE, rownames = FALSE, filter = "top",
-                    options = list(scrollX = TRUE, pageLength = 15))
+      table_selected_view(df)
+
+      # Pre-select rows matching the current selection so DT reflects it.
+      pre_sel <- if (length(sel_keys))
+        which(as.character(df$.key) %in% sel_keys)
+      else
+        integer(0)
+
+      # Hide the .key column from the visible table (still available for
+      # row-selection lookups via table_selected_view()).
+      key_idx <- match(".key", names(df))
+      dt <- DT::datatable(df,
+                          editable = TRUE, rownames = FALSE, filter = "top",
+                          selection = list(mode = "multiple",
+                                           selected = pre_sel),
+                          options = list(scrollX = TRUE,
+                                         pageLength = 15,
+                                         deferRender = TRUE,
+                                         processing  = TRUE,
+                                         columnDefs = list(list(visible = FALSE,
+                                                                targets = key_idx - 1L))))
+      # OMD_mDa is already integer (see MD_data_processed); no client
+      # rounding needed.
+      dt
     })
+
+    # Table -> plot: user picking rows pushes the selection back into
+    # sel_keys_rv. A setequal() guard prevents this from re-firing when
+    # the render pre-selects rows to mirror a plot pick.
+    observeEvent(input$table_selected_rows_selected, {
+      view <- table_selected_view()
+      if (is.null(view) || !nrow(view)) return()
+      rows <- input$table_selected_rows_selected
+      new_keys <- if (length(rows)) unique(as.character(view$.key[rows]))
+                  else character(0)
+      if (!setequal(new_keys, sel_keys_rv())) {
+        sel_source("table")
+        sel_keys_rv(new_keys)
+      }
+    }, ignoreNULL = FALSE, ignoreInit = TRUE)
     
     output$barplot <- plotly::renderPlotly({
       req(vals$m); sel_keys <- selected_keys()
@@ -707,8 +801,11 @@ mass_defect_server <- function(id) {
       # user sees the column structure and knows where results will
       # appear once they click "Calculate homologues".
       empty <- data.frame(series_id = integer(0), unit = character(0), n = integer(0),
-                          mz_min = numeric(0), rt_min = numeric(0),
-                          int_sum = numeric(0))
+                          mz_min = numeric(0), mz_max = numeric(0),
+                          rt_min = numeric(0), rt_max = numeric(0),
+                          int_sum = numeric(0),
+                          ccs_min = numeric(0), ccs_max = numeric(0),
+                          ccs_range = numeric(0))
       has_sid <- "series_id" %in% names(vals$m)
       if (!has_sid) {
         return(DT::datatable(
@@ -723,12 +820,25 @@ mass_defect_server <- function(id) {
           caption = "Homologue search ran but no series were found with the current settings. Try loosening ppm / RT tolerance or reducing minimum series length.",
           options = list(scrollX = TRUE, dom = "t")))
       }
+      has_ccs <- "ccs" %in% names(ms) && any(is.finite(ms$ccs))
       summ <- ms %>% group_by(series_id) %>% summarize(
         unit = if ("series_unit" %in% names(ms)) dplyr::first(stats::na.omit(series_unit)) else NA_character_,
-        n = n(), mz_min = min(mz), rt_min = min(rt), int_sum = sum(intensity),
+        n = n(),
+        mz_min  = min(mz, na.rm = TRUE), mz_max  = max(mz, na.rm = TRUE),
+        rt_min  = min(rt, na.rm = TRUE), rt_max  = max(rt, na.rm = TRUE),
+        int_sum = sum(intensity, na.rm = TRUE),
+        ccs_min = if (has_ccs) suppressWarnings(min(ccs, na.rm = TRUE)) else NA_real_,
+        ccs_max = if (has_ccs) suppressWarnings(max(ccs, na.rm = TRUE)) else NA_real_,
         .groups = "drop"
       )
-      summ <- summ[, c("series_id", "unit", "n", "mz_min", "rt_min", "int_sum"), drop = FALSE]
+      summ$ccs_range <- round(summ$ccs_max - summ$ccs_min, 1)
+      base_cols <- c("series_id", "unit", "n",
+                     "mz_min", "mz_max", "rt_min", "rt_max", "int_sum")
+      if (has_ccs) {
+        summ <- summ[, c(base_cols, "ccs_min", "ccs_max", "ccs_range"), drop = FALSE]
+      } else {
+        summ <- summ[, base_cols, drop = FALSE]
+      }
       vals$summ <- summ
       DT::datatable(summ, rownames = FALSE, selection = "multiple", options = list(scrollX = TRUE))
     })
@@ -781,11 +891,14 @@ mass_defect_server <- function(id) {
             
             md_diffs <- suppressWarnings(as.numeric(unlist(strsplit(gsub(" ", "", input$md_values), ","))))
             mz_diffs <- suppressWarnings(as.numeric(unlist(strsplit(gsub(" ", "", input$mz_values), ","))))
-            
+
             if (anyNA(md_diffs) || anyNA(mz_diffs)) {
                     showNotification("Error parsing MD/mz differences. Use comma-separated numbers.", type = "error")
                     return(df)
             }
+            # Force MD differences to whole mDa - matching is done against
+            # round(OMD_mDa), which is how the column is rendered in the table.
+            md_diffs <- round(md_diffs)
             if (length(md_diffs) != length(mz_diffs)) {
                     showNotification("Number of MD values must match number of m/z values!", type = "error")
                     return(df)
@@ -794,56 +907,53 @@ mass_defect_server <- function(id) {
                     showNotification("Required columns (OMD_mDa, mz) not found in data", type = "error")
                     return(df)
             }
-            
+
             n <- nrow(df)
             da_tol <- input$MZtolerance
-            md_tol <- 0.1
-            ids <- as.character(df$id)
+            ids    <- as.character(df$id)
 
-            # Build a compact keyed data.table once. All match-searches
-            # below use non-equi joins into this table — O(N · k) time
-            # and O(N) memory, instead of the previous O(N^2) `outer()`
-            # matrix which OOMs above ~15-20k features.
-            DT <- data.table::data.table(
-              row_idx = seq_len(n),
-              row_id  = ids,
-              omd     = df$OMD_mDa,
-              mz      = df$mz
-            )
-            data.table::setkey(DT, omd, mz)
+            # Integer-mDa OMD, one value per feature (original ordering).
+            # df$OMD_mDa was already integerized upstream (round half
+            # away from zero) so the values here are IDENTICAL to what
+            # the user sees in every table. No further rounding applied
+            # or needed - if two features display different OMDs, the
+            # algorithm sees different OMDs; if they display the same,
+            # the algorithm sees the same.
+            omd_int <- as.integer(df$OMD_mDa)
+            mz_val  <- as.numeric(df$mz)
+
+            # Hash map: integer OMD -> vector of feature row indices with
+            # that OMD. Lookup is O(1); total match cost is O(n * k)
+            # where k is the number of target MD/mz pairs.
+            by_omd <- split(seq_len(n), omd_int)
 
             withProgress(message = "Calculating MD + m/z differences...", value = 0, {
                     for (idx in seq_along(md_diffs)) {
-                            target_md <- md_diffs[idx]
-                            target_mz <- mz_diffs[idx]
+                            target_md <- as.integer(md_diffs[idx])
+                            target_mz <- as.numeric(mz_diffs[idx])
 
-                            # Shifted-interval query table: each "from"
-                            # row asks "which rows fall within the
-                            # target shift + tolerance box?".
-                            A <- DT[, .(from_idx = row_idx,
-                                        omd_lo = omd + target_md - md_tol,
-                                        omd_hi = omd + target_md + md_tol,
-                                        mz_lo  = mz  + target_mz - da_tol,
-                                        mz_hi  = mz  + target_mz + da_tol)]
-
-                            hits <- DT[A,
-                                       on = .(omd >= omd_lo, omd <= omd_hi,
-                                              mz  >= mz_lo,  mz  <= mz_hi),
-                                       nomatch = 0, allow.cartesian = TRUE,
-                                       .(from_idx = i.from_idx,
-                                         to_idx   = row_idx,
-                                         to_id    = row_id)]
-                            hits <- hits[from_idx != to_idx]
+                            out_vec <- character(n)
+                            for (i in seq_len(n)) {
+                                    # Only features whose integer OMD is
+                                    # EXACTLY omd_int[i] + target_md are
+                                    # ever considered. Nothing else can
+                                    # slip through.
+                                    key <- as.character(omd_int[i] + target_md)
+                                    cand <- by_omd[[key]]
+                                    if (is.null(cand)) next
+                                    cand <- cand[cand != i]
+                                    if (!length(cand)) next
+                                    dmz  <- mz_val[cand] - mz_val[i]
+                                    keep <- abs(dmz - target_mz) <= da_tol
+                                    if (any(keep)) {
+                                            out_vec[i] <- paste(ids[cand[keep]],
+                                                                collapse = ", ")
+                                    }
+                            }
 
                             col_name <- paste0("MD=", target_md,
                                                "_mz=", round(target_mz, 4),
                                                " -> id")
-                            out_vec <- rep("", n)
-                            if (nrow(hits)) {
-                                    agg <- hits[, .(str = paste(to_id, collapse = ", ")),
-                                                keyby = from_idx]
-                                    out_vec[agg$from_idx] <- agg$str
-                            }
                             df[[col_name]] <- out_vec
 
                             incProgress(1 / length(md_diffs),
@@ -863,10 +973,19 @@ mass_defect_server <- function(id) {
     
     
     # --- MD network plot (linked via crosstalk to the two scatter plots) ---
+    # Full re-render on selection change. This guarantees that:
+    #  1) Selected features appear ONLY on the yellow "Selected" trace.
+    #  2) Unselected features stay on their category trace at dimmed
+    #     opacity when a selection is active — and at full opacity when
+    #     no selection exists. No compounding is possible because every
+    #     render starts from scratch.
     output$md_network_plot <- renderPlotly({
       sel_gen_md()  # re-render on selection reset
       req(MD_data_annotated(), vals$m)
-      tryCatch({
+      sel_keys <- sel_keys_rv()
+      has_sel  <- length(sel_keys) > 0L
+      dim_op   <- if (has_sel) 0.3 else 1
+      withProgress(message = "Rendering MD network...", value = 0, {
       df_full <- as.data.frame(MD_data_annotated())
 
       # Keep only rows currently plotted, and bring in the shared .key
@@ -899,28 +1018,27 @@ mass_defect_server <- function(id) {
 
       # Empty state: no differences calculated yet -> still allow linked selection
       if (length(diff_cols) == 0) {
-        sd_all <- crosstalk::SharedData$new(df, key = ~.key, group = ns("md"))
+        is_sel_all <- as.character(df$.key) %in% as.character(sel_keys)
+        un_df <- df[!is_sel_all, , drop = FALSE]
+        se_df <- df[ is_sel_all, , drop = FALSE]
+        sd_un <- crosstalk::SharedData$new(un_df, key = ~.key, group = ns("md"))
         p_empty <- plot_ly(source = ns("mdnet")) %>%
-          add_markers(data = sd_all, x = ~OMD_mDa, y = ~mz,
+          add_markers(data = sd_un, x = ~OMD_mDa, y = ~mz,
                       marker = list(color = "rgba(0, 114, 178, 0.55)", size = 7,
+                                    opacity = dim_op,
                                     line = list(color = "rgba(0,0,0,0.35)", width = 0.4)),
-                      text = ~paste0("id=", id,
-                                     "<br>m/z=", round(mz, 4),
-                                     "<br>OMD_mDa=", round(OMD_mDa, 3)),
-                      hoverinfo = "text", name = "features") %>%
-          # Permanent (initially empty) highlight trace, updated via proxy
-          add_markers(x = numeric(0), y = numeric(0),
-                      name = "Table selection",
-                      marker = list(color = "#F0E442", size = 12, opacity = 0.95,
+                      hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
+                      customdata = ~id, name = "features") %>%
+          add_markers(x = se_df$OMD_mDa, y = se_df$mz,
+                      name = "Selected",
+                      marker = list(color = mzx_highlight_color, size = 8, opacity = 0.95,
                                     line = list(color = "#8a7a00", width = 1.2)),
-                      hoverinfo = "text", text = character(0),
-                      inherit = FALSE, showlegend = TRUE) %>%
+                      hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
+                      customdata = if (nrow(se_df)) se_df$id else integer(0),
+                      inherit = FALSE, showlegend = has_sel) %>%
           mzx_style(xtitle = "OMD (mDa)", ytitle = "m/z",
                     title = "No MD + m/z differences calculated yet") %>%
-          plotly::highlight(on = "plotly_selected", off = "plotly_deselect",
-                            color = I(mzx_highlight_color), opacityDim = 0.25)
-        # Highlight trace is the 2nd trace (0-based index 1) in this branch.
-        md_plot_state(list(df = df, hi_idx = 1L))
+          plotly::layout(dragmode = "select")
         return(p_empty)
       }
 
@@ -945,54 +1063,52 @@ mass_defect_server <- function(id) {
       df_with_match <- df[has_match,  , drop = FALSE]
       df_no_match   <- df[!has_match, , drop = FALSE]
 
-      sd_no  <- crosstalk::SharedData$new(df_no_match,   key = ~.key, group = ns("md"))
-      sd_yes <- crosstalk::SharedData$new(df_with_match, key = ~.key, group = ns("md"))
+      # Partition each category by the current selection. Force character
+      # coercion on both sides so numeric-vs-character .key mismatches
+      # don't silently empty the Selected trace.
+      skey    <- as.character(sel_keys)
+      no_sel  <- as.character(df_no_match$.key)   %in% skey
+      yes_sel <- as.character(df_with_match$.key) %in% skey
+      un_no   <- df_no_match  [!no_sel , , drop = FALSE]
+      un_yes  <- df_with_match[!yes_sel, , drop = FALSE]
+      se_df   <- rbind(df_no_match  [ no_sel , , drop = FALSE],
+                       df_with_match[ yes_sel, , drop = FALSE])
+
+      sd_no  <- crosstalk::SharedData$new(un_no,  key = ~.key, group = ns("md"))
+      sd_yes <- crosstalk::SharedData$new(un_yes, key = ~.key, group = ns("md"))
 
       p <- plot_ly(source = ns("mdnet")) %>%
-        add_trace(type = "scatter", mode = "lines",
+        add_trace(type = "scattergl", mode = "lines",
                   x = lx, y = ly,
                   line = list(color = "rgba(120,120,120,0.35)", width = 1),
                   showlegend = FALSE, hoverinfo = "skip") %>%
         add_markers(data = sd_no,  x = ~OMD_mDa, y = ~mz, name = "No match",
-                    text = ~paste0("id=", id,
-                                   "<br>m/z=", round(mz, 4),
-                                   "<br>OMD_mDa=", round(OMD_mDa, 3)),
-                    hoverinfo = "text",
+                    type = "scattergl",
                     marker = list(color = "rgba(86, 180, 233, 0.55)", size = 7,
-                                  line = list(color = "rgba(0,0,0,0.35)", width = 0.4))) %>%
+                                  opacity = dim_op,
+                                  line = list(color = "rgba(0,0,0,0.35)", width = 0.4)),
+                    hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
+                    customdata = ~id) %>%
         add_markers(data = sd_yes, x = ~OMD_mDa, y = ~mz, name = "Has match",
-                    text = ~paste0("id=", id,
-                                   "<br>m/z=", round(mz, 4),
-                                   "<br>OMD_mDa=", round(OMD_mDa, 3)),
-                    hoverinfo = "text",
-                    marker = list(color = "#D55E00", size = 9, opacity = 0.85,
-                                  line = list(color = "#7a2f00", width = 0.5))) %>%
-        # Permanent (initially empty) highlight trace. It stays at the
-        # SAME trace index for the lifetime of this render, so the
-        # plotlyProxy-based observer below can update just its x/y/text
-        # with a "restyle" call — much faster than re-rendering.
-        add_markers(x = numeric(0), y = numeric(0),
-                    name = "Table selection",
-                    marker = list(color = "#F0E442", size = 12, opacity = 0.95,
+                    type = "scattergl",
+                    marker = list(color = "rgba(213, 94, 0, 0.85)", size = 7,
+                                  opacity = dim_op,
+                                  line = list(color = "#7a2f00", width = 0.5)),
+                    hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
+                    customdata = ~id) %>%
+        add_markers(x = se_df$OMD_mDa, y = se_df$mz,
+                    name = "Selected",
+                    type = "scatter", mode = "markers",
+                    marker = list(color = mzx_highlight_color, size = 8, opacity = 0.95,
                                   line = list(color = "#8a7a00", width = 1.2)),
-                    hoverinfo = "text", text = character(0),
-                    inherit = FALSE, showlegend = TRUE) %>%
+                    hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
+                    customdata = if (nrow(se_df)) se_df$id else integer(0),
+                    inherit = FALSE, showlegend = has_sel) %>%
         mzx_style(xtitle = "OMD (mDa)", ytitle = "m/z",
                   title = "MD + m/z difference network") %>%
-        plotly::highlight(on = "plotly_selected", off = "plotly_deselect",
-                          color = I(mzx_highlight_color), opacityDim = 0.25)
-
-      # Highlight overlay is the 4th trace in this branch:
-      # 0 = edges (lines), 1 = No match, 2 = Has match, 3 = highlight.
-      md_plot_state(list(df = df, hi_idx = 3L))
+        plotly::layout(dragmode = "select")
       p
-    }, error = function(e) {
-      showNotification(paste("MD network plot error:", conditionMessage(e)),
-                       type = "error", duration = 15,
-                       id = ns("nn_mdnet_err"))
-      plot_ly() %>% layout(title = paste("MD network plot error:",
-                                         conditionMessage(e)))
-    })
+      })  # close withProgress
     })
     
     output$feature_table <- renderDT({
@@ -1014,12 +1130,22 @@ mass_defect_server <- function(id) {
             }
 
             # NOTE: we deliberately do NOT filter this table by
-            # selected_keys(). Filtering here caused a feedback loop with
-            # `input$feature_table_rows_selected` (the DT re-render drops
-            # DOM row selection, which the observer then interprets as
-            # "user deselected everything"). Instead, plot-driven
-            # selections are reflected via a dataTableProxy call to
-            # DT::selectRows below.
+            # selected_keys() when the user is actively clicking rows in
+            # the table itself - filtering under the click would drop
+            # DOM row selection and cause an update loop. But when the
+            # selection was made via a linked plot (lasso/box) we DO
+            # filter the table down to those features, and pre-select
+            # every visible row so the setequal() guard in the
+            # rows_selected observer sees "no change" and stays silent.
+            # Depend on ft_plot_sel_snapshot (defined below) instead of
+            # sel_keys_rv() directly so table row-clicks do NOT trigger
+            # a re-render.
+            ft_snap <- ft_plot_sel_snapshot()
+            sel_now <- ft_snap$keys
+            plot_driven <- length(sel_now) > 0 && identical(ft_snap$src, "plot")
+            if (plot_driven && ".key" %in% names(df)) {
+              df <- df[df$.key %in% sel_now, , drop = FALSE]
+            }
 
             # "Only matches" filter: keep rows that have at least one
             # non-empty match column, plus the features they matched to
@@ -1053,14 +1179,21 @@ mass_defect_server <- function(id) {
             # observer below can look up which shared keys the user picked.
             isolate(feature_table_view(df))
 
-            datatable(df[, display_cols, drop = FALSE],
+            sel_arg <- if (plot_driven)
+              list(mode = "multiple", selected = seq_len(nrow(df)))
+            else "multiple"
+
+            dt <- datatable(df[, display_cols, drop = FALSE],
                       options = list(pageLength = 10, scrollX = TRUE),
                       rownames = FALSE,
-                      selection = "multiple") %>%
+                      selection = sel_arg) %>%
                     formatStyle(
                             columns = diff_cols,
                             backgroundColor = styleEqual("", "white", default = "#e8f5e9")
                     )
+            # OMD_mDa is already integer (MD_data_processed); no client
+            # rounding needed.
+            dt
     })
 
     # Table -> plots: push feature_table row selections into the shared
@@ -1072,6 +1205,12 @@ mass_defect_server <- function(id) {
       idx  <- input$feature_table_rows_selected
       keys <- if (length(idx)) unique(as.character(view$.key[idx])) else character(0)
       keys <- keys[!is.na(keys)]
+      # When the table re-renders in response to a plot-driven selection,
+      # DT briefly emits an empty rows_selected event before our
+      # DT::selectRows proxy call reaches the browser. Ignore such
+      # spurious empties while the current selection source is the plot,
+      # otherwise they wipe the highlight after ~1-2s.
+      if (identical(sel_source(), "plot") && !length(keys)) return()
       if (!setequal(keys, sel_keys_rv())) {
         sel_source("table")
         sel_keys_rv(keys)
@@ -1105,31 +1244,8 @@ mass_defect_server <- function(id) {
       DT::selectRows(proxy, rows)
     }, ignoreNULL = FALSE, ignoreInit = TRUE)
 
-    # Fast selection-highlight update for the MD network plot. Uses
-    # plotlyProxy to restyle ONLY the permanent highlight trace
-    # (md_plot_state()$hi_idx). This avoids a full plot re-render on
-    # every DT row click, which was the source of the lag on large data.
-    observeEvent(sel_keys_rv(), {
-      state <- md_plot_state()
-      if (is.null(state) || is.null(state$df)) return()
-      keys <- sel_keys_rv()
-      df   <- state$df
-      sel_df <- if (length(keys)) df[df$.key %in% keys, , drop = FALSE]
-                else df[integer(0), , drop = FALSE]
-      hi_text <- if (nrow(sel_df))
-        paste0("id=", sel_df$id,
-               "<br>m/z=", round(sel_df$mz, 4),
-               "<br>OMD_mDa=", round(sel_df$OMD_mDa, 3))
-      else character(0)
-      plotly::plotlyProxyInvoke(
-        plotly::plotlyProxy("md_network_plot", session),
-        "restyle",
-        list(x = list(sel_df$OMD_mDa),
-             y = list(sel_df$mz),
-             text = list(hi_text)),
-        list(state$hi_idx)
-      )
-    }, ignoreNULL = FALSE, ignoreInit = TRUE)
+    # (MD network selection visuals are now handled by full re-render of
+    #  output$md_network_plot on sel_keys_rv() change — no proxy needed.)
     
     
     
@@ -1169,12 +1285,6 @@ mass_defect_server <- function(id) {
       vals[!is.na(vals) & vals != "(none)" & nzchar(vals)]
     })
 
-    output$sample_ref_ui <- renderUI({
-      req(length(sample_map()) > 0)
-      selectInput(ns("sample_ref"), "Reference sample",
-                  choices = names(sample_map()),
-                  selected = names(sample_map())[1])
-    })
 
     # Only rebuild the settings when the "Plot sample comparison" button is
     # pressed. Selection changes automatically refresh the plot.
@@ -1227,7 +1337,7 @@ mass_defect_server <- function(id) {
 }
 
 # Helper for plotting within module
-make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabled, intensity_col, series_sel, series_cols, show_legend, source_id) {
+make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabled, intensity_col, series_sel, series_cols, show_legend, source_id, sel_keys = NULL) {
   m <- shared_data$data(withSelection = FALSE)
   # Robust intensity->size mapping. Guards:
   #  - column missing / non-numeric  -> constant size
@@ -1253,23 +1363,65 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
   }
 
   base_col <- if (!is.null(series_sel)) "rgba(60,60,60,0.18)" else "rgba(0, 114, 178, 0.75)"  # Okabe-Ito blue
-  marker_spec <- list(size = point_sizes, color = base_col,
-                      line = list(color = "rgba(0,0,0,0.35)", width = 0.4))
-  if (use_size) {
-    marker_spec$sizemode <- "diameter"
-    marker_spec$sizemin  <- 3
+  # Split points into two traces so BOTH appear as separate legend
+  # entries ("All features" in blue, "Selected" in yellow). This keeps
+  # the correct recolouring behaviour while restoring the legend.
+  if (!is.null(sel_keys) && length(sel_keys) && ".key" %in% names(m)) {
+    is_sel <- as.character(m$.key) %in% as.character(sel_keys)
+  } else {
+    is_sel <- rep(FALSE, nrow(m))
   }
-  fig <- plotly::plot_ly(shared_data,
-                         x = as.formula(paste0("~", xvar)),
-                         y = as.formula(paste0("~", yvar)),
-                         key = ~.key, source = source_id,
-                         type = "scattergl", mode = "markers",
-                         marker = marker_spec,
-                         name = "All features", showlegend = show_legend,
-                         hovertemplate = paste0("<b>id</b>=%{customdata}<br>",
-                                                xlabel, "=%{x:.4f}<br>",
-                                                ylabel, "=%{y:.4f}<extra></extra>"),
-                         customdata = ~id)
+  # When a selection is active, fade the unselected points so the yellow
+  # selection stands out (mirrors the old plotly::highlight opacityDim
+  # behaviour that was lost when we split the points into two traces).
+  has_selection <- any(is_sel)
+  base_col_eff <- if (has_selection) {
+    if (!is.null(series_sel)) "rgba(60,60,60,0.10)" else "rgba(0, 114, 178, 0.20)"
+  } else base_col
+  base_line_col_eff <- if (has_selection) "rgba(0,0,0,0.15)" else "rgba(0,0,0,0.35)"
+  df_unsel <- m[!is_sel, , drop = FALSE]
+  df_sel   <- m[ is_sel, , drop = FALSE]
+  sizes_unsel <- point_sizes[!is_sel]
+  sizes_sel   <- point_sizes[ is_sel]
+
+  marker_unsel <- list(size = sizes_unsel, color = base_col_eff,
+                       line = list(color = base_line_col_eff, width = 0.4))
+  marker_sel   <- list(size = sizes_sel,   color = mzx_highlight_color,
+                       line = list(color = "#8a7a00", width = 1.2))
+  if (use_size) {
+    marker_unsel$sizemode <- "diameter"; marker_unsel$sizemin <- 3
+    marker_sel$sizemode   <- "diameter"; marker_sel$sizemin   <- 3
+  }
+  # Wrap the SharedData in a filtered SharedData for the "All features"
+  # trace (needed so lasso/box events still fire via crosstalk). The
+  # "Selected" trace is drawn from a plain data.frame — it only needs to
+  # be visible in the legend and painted; it doesn't need to be
+  # lasso-selectable itself.
+  fig <- plotly::plot_ly(source = source_id)
+  if (nrow(df_unsel)) {
+    sd_unsel <- crosstalk::SharedData$new(df_unsel, key = ~.key,
+                                          group = shared_data$groupName())
+    fig <- fig %>% plotly::add_markers(
+      data = sd_unsel,
+      x = as.formula(paste0("~", xvar)),
+      y = as.formula(paste0("~", yvar)),
+      key = ~.key,
+      marker = marker_unsel, name = "All features", showlegend = show_legend,
+      hovertemplate = paste0("<b>id</b>=%{customdata}<br>",
+                             xlabel, "=%{x:.4f}<br>",
+                             ylabel, "=%{y:.4f}<extra></extra>"),
+      customdata = ~id)
+  }
+  if (nrow(df_sel)) {
+    fig <- fig %>% plotly::add_markers(
+      data = df_sel,
+      x = df_sel[[xvar]], y = df_sel[[yvar]],
+      marker = marker_sel, name = "Selected", showlegend = show_legend,
+      hovertemplate = paste0("<b>id</b>=%{customdata}<br>",
+                             xlabel, "=%{x:.4f}<br>",
+                             ylabel, "=%{y:.4f}<extra></extra>"),
+      customdata = df_sel$id, inherit = FALSE)
+  }
 
   if (!is.null(series_sel)) {
     for (sid in series_sel) {
@@ -1285,8 +1437,7 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
   }
   fig %>%
     mzx_style(xtitle = xlabel, ytitle = ylabel, legend = show_legend) %>%
-    plotly::highlight(on = "plotly_selected", off = "plotly_deselect",
-                      color = I(mzx_highlight_color), opacityDim = 0.25)
+    plotly::layout(dragmode = "select")
 }
 
 

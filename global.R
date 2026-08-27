@@ -15,6 +15,7 @@ library(vroom)
 library(igraph)
 library(bslib)
 library(data.table)
+library(shinyjs)
 if (requireNamespace("readxl", quietly = TRUE)) {
   suppressPackageStartupMessages(library(readxl))
 }
@@ -33,3 +34,4 @@ sapply(r_files, source)
 
 # 4. Shared data
 data("isotopes", package = "enviPat")
+

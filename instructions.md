@@ -19,7 +19,7 @@ It is designed for LC/GC‑HRMS, DI/FIA, DIA, and **IM‑MS** workflows.
 
 ### 1.1 Required columns
 
-mzXplorer accepts a single **CSV (.csv) or Excel (.xlxs)** feature file with at least:
+mzXplorer accepts a single **CSV (.csv) or Excel (.xlsx / .xls)** feature file with at least:
 
 | Column      | Description                 |
 |-------------|-----------------------------|
@@ -59,7 +59,7 @@ comparing samples.
 
 ### 2.1 Workflow
 
-1.  **Upload CSV** → confirm column mapping.
+1.  **Upload feature list file** → confirm column mapping.
 2.  **Mass Defect formulas** → enter one to **three mass‑defect bases** entered as:
 
 | Input      | Meaning                      |
@@ -70,12 +70,21 @@ comparing samples.
 | `CH2,Cl-H` | CH₂ and (Cl−H)               |
 | `CH2/10`   | fractional mass with base 10 |
 
+3.  **Rounding mode** → choose how nominal masses are computed inside the MD formulas:
+
+| Option     | Meaning                                              |
+|------------|------------------------------------------------------|
+| `round`    | standard rounding to the nearest integer (default)   |
+| `ceiling`  | always round up to the next integer                  |
+| `floor`    | always round down to the previous integer            |
+The same mode is applied consistently to MD1, MD2, and MD3.
+
 \
 After clicking **Process** it computes:  
--   **OMD** – original mass defect\
--   **RMD** – relative mass defect\
+-   **OMD** – original mass defect
+-   **RMD** – relative mass defect
 -   **MD1 (MD2**, **MD3)** – user input mass defects\
-  All appear in axis selectors for the interactive plots. \
+  All appear in axis selectors for the interactive plots.
   
 3.  Choose plot ranges (intensity, mz, rt) and click **Plot**. 
     **Two synchronized scatter plots** appear using Plotly.
@@ -127,18 +136,28 @@ section.
 | CCS mode | RT only / CCS only / Both |
 | CCS tolerance | max CCS difference per step |
 
-##### The algorithm performs:
+##### How the algorithm finds series
 
-1.  **Candidate edges** via mass defect + optional RT restrictions (`build_edges()`).
-2.  **Graph construction** (`build_graph()`).
-3.  **Connected components** → provisional series.
-4.  **Monotonicity filtering** (`strict_rt_filter()`):
-    -   RT monotonicity\
-    -   CCS monotonicity\
-    -   CCS tolerance\
-5.  **Minimum length** check.\
-6.  **Chromatographic smoothness** (`apply_shiny_splines()`).
-7.  Final renumbering of surviving series.
+1.  **Mass‑step window.** A tolerance band is placed around the exact
+    mass of the repeating unit (the larger of the ppm error and a
+    small absolute floor). If **Allow gaps** is on, the same window is
+    also applied at twice the unit mass.
+2.  **Pairwise linking.** Every pair of features whose m/z difference
+    falls inside that window is linked as one step of the unit.
+3.  **RT / CCS gating.** A link is kept only if the two features are
+    within **RT tolerance** (and, if selected, follow the requested RT
+    or CCS trend).
+4.  **Grouping.** Transitively linked features form one provisional
+    series.
+5.  **Trend filter.** Within each series, any feature that breaks the
+    requested monotonic RT (or CCS) trend is removed.
+6.  **Length filter.** Series shorter than **Minimum length** are
+    discarded; the rest are renumbered.
+
+Because a step of the unit in m/z corresponds to a fixed shift in
+Kendrick mass, the resulting series are exactly the features that
+would fall on the same horizontal line in a Kendrick mass‑defect plot
+for the same base unit.
 _____________________________________________________________________
 
 ##### CCS‑Aware Monotonicity
@@ -152,16 +171,16 @@ When CCS support is enabled, the user may choose:
 
 **CCS only**
 
--   CCS monotonicity enforced\
--   RT ignored\
+-   CCS monotonicity enforced
+-   RT ignored
 -   optional CCS tolerance filter
 
 **Both RT + CCS**
 
 A point must satisfy:
 
--   RT monotonicity *and*\
--   CCS monotonicity *and*, if enabled\
+-   RT monotonicity *and*
+-   CCS monotonicity *and*, if enabled
 -   CCS tolerance per step
 
 Ideal for LC‑IM‑HRMS workflows.
@@ -169,9 +188,9 @@ _____________________________________________________________________
 
 Homologue table list all series passing the filters and includes:
 
--   `series_id`, `n`\
--   `mz_min`, `mz_max`\
--   `rt_min`, `rt_max`\
+-   `series_id`, `n`
+-   `mz_min`, `mz_max`
+-   `rt_min`, `rt_max`
 -   `int_sum`
 -   `ccs_min`, `ccs_max`, `ccs_range` (if CCS is present)
 
@@ -213,7 +232,7 @@ Plot types: **Grouped bars** or **Lines + markers**.
     auto‑refreshes the sample plot (capped at 40 features for
     legibility).
 -   Legend format:
-    `id=… | mz=… | rt=… | intensity=….
+    `id=… | mz=… | rt=… | intensity=…`.
 
 ### 2.7 Selection logic
 
@@ -237,31 +256,38 @@ values if present.
 
 ### 2.9 Mass Defect Equations
 
+In all equations below, $\text{nom}(\cdot)$ denotes the **nominal-mass operator** and can be chosen as `round`, `ceiling`, or `floor`:
+
+
+The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown below.
+
 <p><b>OMD</b> — original mass defect</p>
 
-<p>$$ \text{OMD} = \text{round}(m) - m $$</p>
+<p>$$ \text{OMD (mDa)} = (\text{round}(m) - m) \times 10^{3} $$</p>
+
+<p>(The OMD column is reported in milli‑Daltons — i.e. the raw mass defect is multiplied by $10^{3}$ and then rounded to the nearest integer using round‑half‑away‑from‑zero.)</p>
 
 <p><b>RMD</b> — relative mass defect</p>
 
-<p>$$ \text{RMD} = \frac{\text{round}(m) - m}{m} \times 10^{6} $$</p>
+<p>$$ \text{RMD (ppm)} = \frac{\text{round}(m) - m}{m} \times 10^{6} $$</p>
 
 <p><b>MD1</b> — first‑order MD with unit $u_1$</p>
 
 <p>$$ m_1 = m \times \frac{\text{round}(u_1)}{u_1} $$</p>
 
-<p>$$ \text{MD1} = \text{round}(m_1) - m_1 $$</p>
+<p>$$ \text{MD1} = \text{nom}(m_1) - m_1 $$</p>
 
 <p><b>MD2</b> — second‑order MD with unit $u_2$</p>
 
 <p>$$ m_2 = \frac{\text{MD1}(m)}{\text{MD1}(u_2)} $$</p>
 
-<p>$$ \text{MD2} = \text{round}(m_2) - m_2 $$</p>
+<p>$$ \text{MD2} = \text{nom}(m_2) - m_2 $$</p>
 
 <p><b>MD3</b> — third‑order MD with unit $u_3$</p>
 
 <p>$$ m_3 = \frac{\text{MD2}(m)}{\text{MD2}(u_3)} $$</p>
 
-<p>$$ \text{MD3} = \text{round}(m_3) - m_3 $$</p>
+<p>$$ \text{MD3} = \text{nom}(m_3) - m_3 $$</p>
 
 **Examples of the MD‑formula input box**
 
@@ -293,68 +319,124 @@ values if present.
 
 # 3. In‑Source Fragmentation (ISF) tab
 
-The ISF tab appear when pressing check box "Show ISF analysis tab". It annotates MS1 features that are likely in‑source fragments
+The ISF tab appears when the sidebar checkbox **"Show ISF analysis tab"** (in the Mass Defect tab) is ticked. It annotates MS1 features that are likely in-source fragments
 of other features, using an MS2 fragment file. It shares the same
 crosstalk selection model, sample comparison, and column‑mapping as the MD tab.
 
 ### 3.1 Workflow
 
-1.  **Upload feature CSV** → confirm column mapping.
+1.  **Upload feature list file** → confirm column mapping.
 2.  **Upload fragment file** → Only required for In-source fragmentation annotation. 
 Supports both .mgf and .msp format. 
 Should contain the fragments of the feature as it used to find matches between fragment ions (MS2) and feature ions (MS1). 
 Needs to contain fragment peaks, retention time and precursor mz.  
 
-3.   Set **ppm tolerance** and **RT tolerance** for detecting ISF and press **Process*
+3.   Set **m/z tolerance (Da)** (default 0.01 Da) and **RT tolerance**
+     for detecting ISF, and optionally add **neutral losses** and
+     **adducts** to annotate (see 3.7). Press **Process**.
 4.  Click **Plot**. mzXplorer produces:
     -   two synchronized scatter plots,
     -   an **ISF network plot**,
+    -   an **ISF ratio plot** (fragment/precursor intensity vs. RT),
     -   a **selection‑linked feature table**,
     -   a **processed feature table** in the yellow export section.
 
 ### 3.2 Interactive plots
 
--   Two Plotly scatter plots side-by-side. Each plot has independent X variable and Y Variabel. Any numeric column is selectable.
--   Enabling **Show intensity as size** scales point size by selected intensity column.
--   **Lasso / box select** in either scatter or the MD/mz **network
-    plot** highlights the same features in all three views
-    (crosstalk‑linked).
--   Selection drives the **selected‑data table**, the **barplot**, the
-    **MD/mz difference table**, and the **sample comparison plot**.
+-   Two Plotly scatter plots side-by-side. Each plot has independent X variable and Y variable. Any numeric column is selectable.
+-   Enabling **Show intensity as size** scales point size by the selected intensity column.
+-   **Lasso / box select** in any of the scatter plots, the **ISF
+    network plot** or the **ISF ratio plot** highlights the same
+    features across all views.
+-   The **ISF network plot** uses 5 categories with distinct colours:
+    *Precursor / clean* (blue), *ISF (fragment)* (orange),
+    *ISF (neutral loss)* (green), *ISF (fragment + NL)* (purple) and
+    *Adduct* (pink). Adduct nodes have no edges.
+-   The **ISF ratio plot** shows only ISF pairs (adducts excluded) with
+    3 legend entries: *Fragment*, *Neutral loss* and
+    *Fragment + Neutral loss*. Selected points from any linked plot are
+    over‑drawn in the amber highlight colour.
 -   Use the **Reset selection** button on the tab to clear all linked
-    selections and re‑render the plots.
-    
+    selections and re-render the plots.
+
 ### 3.3 Feature table (selection‑linked)
 
-Displays only rows in the current selection (or all rows when nothing is
-selected). The `ISF_annotation` column is the **first column** and shows
-either `not ISF` or `ISF of ID <precursor id(s)>`.
+Selection behaviour:
+
+-   When a selection is made in **any plot**, the selection‑linked
+    table is filtered to show ONLY the selected features (all rows are
+    pre‑selected).
+-   When a selection is made **in the table** (row clicks), the table
+    keeps showing ALL features and the selection is echoed to every
+    plot as highlighted points — the table is NOT filtered.
+-   When nothing is selected, the table shows all features.
+
+Columns:
+-   `ISF_dDa` = difference between m/z of MS2 fragment and ISF features in Da.
+-   `ISF_NL_dDa` = difference between feature-to-feature gap and user-input neutral 
+    loss mass, in Da. For example a measured 18.0120 Da gap between two features vs H₂O (18.0106) yields `0.0014`.
+-   `ISF_drt` / `ISF_NL_drt` = RT difference in minutes.
+-   `ISF_ratio` / `ISF_NL_ratio` = fragment intensity / precursor
+    intensity.
+-   `Adduct_annotation` = `adduct of ID <partner id(s)>` on both
+    partners of an adduct pair; `Adduct_type` names the specific
+    adduct species assigned to that feature.
 
 -   **Exclude identified from ISF in export** — when ticked, the
-    **Export Selected** download drops rows whose `ISF_annotation` is
-    not `not ISF`. Possible to downloads the current selection (or the full
-    table when no selection is active)
--   **Reset selection** — clears the crosstalk selection.
+    **Export Selected** download drops rows whose `ISF_annotation` OR
+    `ISF_NL_annotation` is not `not ISF`.
+-   **Reset selection** — clears the plot/table selection.
 
 ### 3.4 Processed feature table (full)
 
-**Not** affected by plot selection — this is always the full processed list, so it stays a stable reference
-for export.
+**Not** affected by plot selection — always the full processed list.
 
 -   **Filter table results** — radio buttons for *only ISF*, *only
-    non‑ISF*, or *both*.
--   **Editable `ISF_annotation`** — double‑click a cell in the first
-    column to manually re‑tag a feature (e.g. mark a false positive as
-    `not ISF`). Edits are persisted to the underlying data and are
-    reflected immediately in the plots, the selection‑linked table and
-    the export.
+    non‑ISF*, or *both*. *only ISF* includes any feature with either
+    a fragment or NL annotation.
+-   **Editable `ISF_annotation`** — double‑click a cell to manually
+    re‑tag. Edits are persisted and immediately reflected in the plots
+    and export. *Should only be used if evidence exist on wrong tag.*
 -   **Export Processed Table (Full CSV Columns)** — downloads the full
-    processed table with all original columns plus `ISF_annotation`,
-    respecting any manual re‑tagging made.
+    table with all original columns plus every new ISF / NL / adduct
+    column, respecting manual re‑tags.
+    
+### 3.7 Neutral‑loss and adduct annotation
 
-### 3.5 Sample comparison *(optional)*
+**Neutral losses**: select any subset of the preset losses (H₂O
+18.0106, NH₃ 17.0265, CO₂ 43.9898, SO₃ 79.9568, HCl 35.9767, HF
+20.0062) and/or add custom entries via the `Label,mass;…` text field.
+For every enabled loss X and every pair of features (j, i) in the
+data:
 
-Similar to the MD tab. Enable **Enable sample comparison** to be able to compare selected features (from other plots) accross different samples.
+-   If `|mz_i − mz_j − X| ≤ m/z tolerance (Da)` **and**
+    `|rt_i − rt_j| ≤ RT tolerance`, then j is annotated as the
+    neutral‑loss fragment of i (the heavier partner is treated as the
+    precursor).
+-   Multiple precursor candidates per fragment are stored
+    comma‑separated, sorted by ascending `|ISF_NL_dDa|` (best match
+    first).
+
+**Adducts**: select any subset of preset adducts (`[M+H]+` 1.007276,
+`[M+Na]+` 22.989218, `[M+K]+` 38.963158, `[M+NH₄]+` 18.033823,
+`[M−H]−` −1.007276, `[M+HCOO]−` 44.998201, `[M+Cl]−` 34.969402)
+and/or custom entries. For every unordered pair of adducts (a, b)
+with masses (Mₐ, M_b), any two features (j, i) satisfying:
+
+-   `|mz_i − mz_j − |M_b − Mₐ|| ≤ m/z tolerance (Da)` **and**
+-   `|rt_i − rt_j| ≤ RT tolerance`
+
+are flagged as adducts of the **same neutral molecule M**. The
+lighter partner is labelled with the lighter adduct's name and the
+heavier partner with the heavier one. Both partners are annotated in
+`Adduct_annotation` (`adduct of ID <partner id>`) and `Adduct_type`.
+**Adduct annotation overrides ISF**: if a feature is flagged as an
+adduct, its `ISF_annotation`, `ISF_NL_annotation` and all associated
+`dDa/drt/ratio` fields are cleared.
+
+### 3.6 Sample comparison *(optional)*
+
+Similar to the MD tab. Enable **Enable sample comparison** to be able to compare selected features (from other plots) across different samples.
 Choose the number of samples and selected the samples intesnity columns.
 Plot types: **Grouped bars** or **Lines + markers**.
 -   Plot is drawn on **Plot sample comparison**; settings apply on
@@ -366,18 +448,20 @@ Plot types: **Grouped bars** or **Lines + markers**.
     `id=… | mz=… | rt=… | intensity=… | ISF_annotation=…`.
 
 
-### 3.6 Tips
+### 3.7 Tips
 
--   Start with a **wider ppm** (10-15) and RT tolerance to see all
-    candidates, then tighten once the network looks reasonable.
+-   Start with a **wider m/z tolerance** (e.g. 0.02 Da) and RT
+    tolerance to see all candidates, then tighten once the network
+    looks reasonable.
 -   Use the **network plot** to spot precursors with many linked
-    fragments
+    fragments.
 -   Use **lasso select** on the network plot to isolate a candidate
     precursor and its fragments in the feature table.
 -   Curate false positives via the editable `ISF_annotation` column in
-    the Full feature table, then re‑export.
+    the full feature table, then re‑export.
 -   Tick **Exclude identified from ISF in export** to get a clean
-    feature list (only `not ISF` rows) for downstream statistics.
+    feature list for downstream statistics.
+
 
 
 </div>

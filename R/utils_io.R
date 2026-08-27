@@ -579,8 +579,9 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
         width = bar_w,
         name = short_labels[i], type = "bar",
         legendgroup = short_labels[i],
-        text = hi,
+        hovertext = hi,
         hoverinfo = "text",
+        textposition = "none",
         marker = list(color = pal[((i - 1) %% length(pal)) + 1],
                       line = list(color = "#222", width = 0.4))
       )
