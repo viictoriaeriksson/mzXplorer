@@ -451,12 +451,14 @@ isf_server <- function(id) {
 
         # Ensure the bar tops out at 100% regardless of chunk-rounding.
         remaining <- max(0, 1 - 0.05 - 0.05 - 0.15 - match_state$spent - 0.05)
-        n_hit <- sum(annotated$ISF_annotation != "not ISF")
+        is_frag_hit <- annotated$ISF_annotation != "not ISF"
+        is_nl_hit   <- if (!is.null(annotated$ISF_NL_annotation)) annotated$ISF_NL_annotation != "not ISF" else rep(FALSE, nrow(annotated))
+        n_hit <- sum(is_frag_hit | is_nl_hit)
         incProgress(remaining + 0.05,
-                    detail = sprintf("Done in %ss. %s ISF fragments found.",
+                    detail = sprintf("Done in %ss. %s potential ISF found.",
                                      dt_match, format(n_hit, big.mark = " ")))
         showNotification(sprintf(
-          "Finished processing in %ss. Found %s ISF fragments out of %s features. Click 'Plot' to render the interactive plots.",
+          "Finished processing in %ss. Found %s potential ISF (fragment or neutral-loss) out of %s features. Click 'Plot' to render the interactive plots.",
           dt_match,
           format(n_hit,           big.mark = " "),
           format(nrow(annotated), big.mark = " ")),
@@ -466,13 +468,17 @@ isf_server <- function(id) {
     
     output$isf_summary_stat <- renderUI({
       req(vals$df_annotated)
-      is_isf <- vals$df_annotated$ISF_annotation != "not ISF"
-      n_frag <- sum(is_isf)
+      is_frag <- vals$df_annotated$ISF_annotation != "not ISF"
+      is_nl   <- if (!is.null(vals$df_annotated$ISF_NL_annotation)) vals$df_annotated$ISF_NL_annotation != "not ISF" else rep(FALSE, nrow(vals$df_annotated))
+      is_any  <- is_frag | is_nl
+      n_any   <- sum(is_any)
+      n_frag  <- sum(is_frag)
+      n_nl    <- sum(is_nl)
       n_total <- nrow(vals$df_annotated)
       wellPanel(
         p(icon("info-circle"), strong("ISF Summary:"),
-          sprintf("Identified %d potential fragments out of %d total features (%.1f%%).",
-                  n_frag, n_total, 100 * n_frag / max(1, n_total)))
+          sprintf("Identified %d potential ISF out of %d total features (%.1f%%) - %d via ISF_annotation, %d via ISF_NL_annotation.",
+                  n_any, n_total, 100 * n_any / max(1, n_total), n_frag, n_nl))
       )
     })
     
@@ -767,8 +773,9 @@ isf_server <- function(id) {
 
         incProgress(0.4, detail = "Rendering DataTable...")
         col_names <- names(res)
-        isf_idx <- match("ISF_annotation", col_names) - 1L
-        disable_idx <- setdiff(seq_along(col_names) - 1L, isf_idx)
+        editable_cols <- intersect(c("ISF_annotation", "ISF_NL_annotation"), col_names)
+        editable_idx  <- match(editable_cols, col_names) - 1L
+        disable_idx   <- setdiff(seq_along(col_names) - 1L, editable_idx)
 
       dt <- DT::datatable(res,
                           rownames = FALSE,
@@ -786,31 +793,51 @@ isf_server <- function(id) {
       })  # close withProgress
     })
 
-    # Persist manual re-tagging of ISF_annotation back to the master data.
+    # Persist manual re-tagging of ISF_annotation / ISF_NL_annotation back to
+    # the master data.
     observeEvent(input$ISF_table_cell_edit, {
       info <- input$ISF_table_cell_edit
       view <- isf_table_view()
       req(view, vals$df_annotated)
       col_name <- names(view)[info$col + 1L]
-      if (!identical(col_name, "ISF_annotation")) return()
+      if (!col_name %in% c("ISF_annotation", "ISF_NL_annotation")) return()
 
       # info$row is 1-based within the currently displayed (filtered) view.
-      key_col <- if (".key" %in% names(view)) ".key" else "id"
-      row_key <- view[[key_col]][info$row]
+      # The view carries `.key` (added to df_filtered at Plot time), but the
+      # master annotated table and orig_df only carry `id`. Look up both keys
+      # from the view so we can locate the row in each frame.
+      row_id  <- if ("id"   %in% names(view)) view[["id"]][info$row]   else NA
+      row_key <- if (".key" %in% names(view)) view[[".key"]][info$row] else NA
       new_val <- as.character(info$value)
 
-      # Update master annotated data
-      m_idx <- which(vals$df_annotated[[key_col]] == row_key)
-      if (length(m_idx)) vals$df_annotated$ISF_annotation[m_idx] <- new_val
+      # Update master annotated data (matched by id).
+      if (!is.na(row_id) && "id" %in% names(vals$df_annotated)) {
+        m_idx <- which(vals$df_annotated[["id"]] == row_id)
+        if (length(m_idx)) {
+          d <- vals$df_annotated
+          d[[col_name]][m_idx] <- new_val
+          vals$df_annotated <- d
+        }
+      }
 
-      # Also update the filtered/display data (drives plots + selected table)
-      f_idx <- which(vals$df_filtered[[key_col]] == row_key)
-      if (length(f_idx)) vals$df_filtered$ISF_annotation[f_idx] <- new_val
+      # Also update the filtered/display data (drives plots + selected table).
+      if (!is.null(vals$df_filtered)) {
+        f_key_col <- if (".key" %in% names(vals$df_filtered)) ".key" else "id"
+        f_lookup  <- if (f_key_col == ".key") row_key else row_id
+        if (!is.na(f_lookup)) {
+          f_idx <- which(vals$df_filtered[[f_key_col]] == f_lookup)
+          if (length(f_idx)) {
+            d <- vals$df_filtered
+            d[[col_name]][f_idx] <- new_val
+            vals$df_filtered <- d
+          }
+        }
+      }
     })
     
     # --- Clean Export Logic ---
     output$export_all <- downloadHandler(
-      filename = function() { paste("mzXplorer_ISF_Cleaned_", Sys.Date(), ".csv", sep="") },
+      filename = function() { paste("mzXplorer_ISF_ProcessedTable_", Sys.Date(), ".csv", sep="") },
       content = function(file) {
         req(vals$df_annotated, vals$orig_df)
         res_df <- vals$df_annotated
@@ -822,6 +849,21 @@ isf_server <- function(id) {
                      "ISF_NL_drt", "ISF_NL_ratio",
                      "Adduct_annotation", "Adduct_type")) {
           if (!is.null(res_df[[cn]])) out[[cn]] <- res_df[[cn]]
+        }
+
+        # Apply the same Processed-table filter as the on-screen view so the
+        # export mirrors what the user sees. Manual re-tagging in the table has
+        # already been merged into `out` above (via vals$df_annotated), so the
+        # filter runs against the updated annotations.
+        tf <- isolate(input$table_filter)
+        if (!is.null(tf)) {
+          is_frag_row <- if ("ISF_annotation"    %in% names(out)) out$ISF_annotation    != "not ISF" else rep(FALSE, nrow(out))
+          is_nl_row   <- if ("ISF_NL_annotation" %in% names(out)) out$ISF_NL_annotation != "not ISF" else rep(FALSE, nrow(out))
+          is_any_isf  <- is_frag_row | is_nl_row
+          out <- switch(tf,
+                        "only include ISF"          = out[is_any_isf, ],
+                        "exclude ISF, keep non-ISF" = out[!is_any_isf, ],
+                        out)
         }
 
         data.table::fwrite(out, file)
