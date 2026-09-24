@@ -255,12 +255,16 @@ apply_column_mapping <- function(df, mapping) {
     if (is.null(src) || is.na(src) || !nzchar(src) || identical(src, "(none)")) next
     if (!src %in% names(df)) next
     if (identical(src, tgt)) next
-    # If a column already exists with the target name (e.g. an unrelated
-    # column that happens to be called "id"), rename it out of the way.
+    # Copy the source column to the canonical target name instead of
+    # renaming, so the user's original column name is still visible in
+    # downstream UIs (e.g. axis dropdowns) alongside the canonical alias.
+    # If a column with the target name already exists (e.g. an unrelated
+    # column that happens to be called "id"), rename that one out of the
+    # way first to avoid collision.
     if (tgt %in% names(df)) {
       data.table::setnames(df, tgt, paste0(tgt, "_orig"))
     }
-    data.table::setnames(df, src, tgt)
+    df[, (tgt) := df[[src]]]
   }
   if (!"id" %in% names(df)) df[, id := .I]
   df
