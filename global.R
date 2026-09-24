@@ -16,6 +16,7 @@ library(igraph)
 library(bslib)
 library(data.table)
 library(shinyjs)
+library(markdown)
 if (requireNamespace("readxl", quietly = TRUE)) {
   suppressPackageStartupMessages(library(readxl))
 }
