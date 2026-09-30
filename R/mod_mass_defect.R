@@ -365,7 +365,7 @@ mass_defect_server <- function(id) {
 
       if (!"id" %in% names(df)) df$id <- seq_len(nrow(df))
 
-      df$RMD_ppm <- round((round(df$mz) - df$mz) / df$mz * 1e6)
+      df$RMD_ppm <- round((df$mz - round(df$mz)) / df$mz * 1e6)
       # OMD is stored as an INTEGER mDa using "round half away from
       # zero" (sign(x) * floor(abs(x) + 0.5)). This is the single
       # source of truth for both:
@@ -375,7 +375,7 @@ mass_defect_server <- function(id) {
       # would silently disagree with the display for exact-half values
       # such as -136.5 (banker's gives -136, display shows -137) and
       # produce phantom pairs.
-      raw_omd <- (round(df$mz) - df$mz) * 1e3
+      raw_omd <- (df$mz - round(df$mz)) * 1e3
       df$OMD_mDa <- as.integer(sign(raw_omd) * floor(abs(raw_omd) + 0.5))
       df
     })
@@ -407,18 +407,9 @@ mass_defect_server <- function(id) {
           checkboxInput(ns("use_ccs_toggle"),
                         "Enable CCS / ion mobility-based homologue rules",
                         value = FALSE),
-          conditionalPanel(
-            condition = sprintf("input['%s'] == true", ns("use_ccs_toggle")),
-            radioButtons(ns("homol_ccs_mode"),
-                         "Use which dimension for homologue trend?",
-                         choices = c("RT only"                 = "rt",
-                                     "CCS / ion mobility only" = "ccs",
-                                     "RT + CCS / ion mobility" = "both"),
-                         selected = "ccs", inline = FALSE),
-            numericInput(ns("homol_ccstol"),
-                         "CCS / ion mobility tolerance (per step)",
-                         value = 0, min = 0, step = 0.1)
-          )
+          numericInput(ns("homol_ccstol"),
+                       "CCS / ion mobility tolerance",
+                       value = 0, min = 0, step = 0.1)
         )
       }
     })
@@ -429,7 +420,6 @@ mass_defect_server <- function(id) {
     
     output$plotctr <- renderUI({
       df <- MD_data_raw()
-      axis_choices <- unique(names(df))
       tagList(
         fluidRow(
           column(6, selectInput(ns('filter_col'),
@@ -437,10 +427,10 @@ mass_defect_server <- function(id) {
                                 choices = c("(none)", names(df)), selected = "(none)"))
         ),
         fluidRow(
-          column(3, selectInput(ns('xvar1'), 'X variable Plot 1', choices = axis_choices, selected = "rt")),
-          column(3, selectInput(ns('yvar1'), 'Y variable Plot 1', choices = axis_choices, selected = "mz")),
-          column(3, selectInput(ns('xvar2'), 'X variable Plot 2', choices = axis_choices, selected = "RMD_ppm")),
-          column(3, selectInput(ns('yvar2'), 'Y variable Plot 2', choices = axis_choices, selected = "mz"))
+          column(3, selectInput(ns('xvar1'), 'X variable Plot 1', choices = names(df), selected = "rt")),
+          column(3, selectInput(ns('yvar1'), 'Y variable Plot 1', choices = names(df), selected = "mz")),
+          column(3, selectInput(ns('xvar2'), 'X variable Plot 2', choices = names(df), selected = "RMD_ppm")),
+          column(3, selectInput(ns('yvar2'), 'Y variable Plot 2', choices = names(df), selected = "mz"))
         )
       )
     })
@@ -586,15 +576,8 @@ mass_defect_server <- function(id) {
                             min_length = input$homol_minlen,
                             rt_trend = input$homol_rttrend,
                             R2_min = input$homol_R2,
-                            ccs_mode = {
-                              if (isTRUE(input$use_ccs_toggle)) {
-                                m <- input$homol_ccs_mode
-                                if (!is.null(m) && nzchar(m)) m else "ccs"
-                              } else "rt"
-                            },
-                            ccs_tol  = {
-                              if (isTRUE(input$use_ccs_toggle)) input$homol_ccstol else 0
-                            }),
+                            ccs_mode = if (isTRUE(input$use_ccs_toggle)) "ccs" else "rt",
+                            ccs_tol  = if (isTRUE(input$use_ccs_toggle)) input$homol_ccstol else 0),
             error = function(e) {
               showNotification(sprintf("Unit '%s' failed: %s", u, conditionMessage(e)),
                                type = "error", duration = 8)
