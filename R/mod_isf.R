@@ -87,21 +87,17 @@ isf_ui <- function(id) {
           condition = sprintf("input['%s'] == 'Sample_comparison'", ns("result_sections")),
           div(class = "mzx-section mzx-sample",
             tags$h4("Sample comparison"),
-            checkboxInput(ns("enable_sample_comp"), "Enable sample comparison", value = FALSE),
-            conditionalPanel(
-              condition = sprintf("input['%s'] == true", ns("enable_sample_comp")),
-              tags$small(style = "color:#555;",
-                         "Assign one column per sample. The plot shows those values for the currently selected feature(s)."),
-              tags$br(), tags$br(),
-              numericInput(ns("n_samples"), "Number of samples", value = 2, min = 2, max = 20, step = 1),
-              uiOutput(ns("sample_slots_ui")),
-              selectInput(ns("sample_plot_type"), "Plot type",
-                          choices = c("Grouped bars" = "bar",
-                                      "Lines + markers" = "line"),
-                          selected = "bar"),
-              actionButton(ns("go_sample_comp"), "Plot sample comparison",
-                           width = "100%", class = "btn-secondary")
-            )
+            tags$small(style = "color:#555;",
+                       "Assign one column per sample. The plot shows those values for the currently selected feature(s)."),
+            tags$br(), tags$br(),
+            numericInput(ns("n_samples"), "Number of samples", value = 2, min = 2, max = 20, step = 1),
+            uiOutput(ns("sample_slots_ui")),
+            selectInput(ns("sample_plot_type"), "Plot type",
+                        choices = c("Grouped bars" = "bar",
+                                    "Lines + markers" = "line"),
+                        selected = "bar"),
+            actionButton(ns("go_sample_comp"), "Plot sample comparison",
+                         width = "100%", class = "btn-secondary")
           )
         ),
 
@@ -1263,7 +1259,7 @@ isf_server <- function(id) {
     })
 
     output$sample_comp_plot <- plotly::renderPlotly({
-      req(input$enable_sample_comp, vals$df_filtered)
+      req(vals$df_filtered)
       s <- sample_settings()
       req(s, s$sm)
       keys <- selected_keys()

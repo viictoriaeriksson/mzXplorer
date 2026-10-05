@@ -208,10 +208,18 @@ Clicking one or more rows in the homologue table:
 
 Use **Clear series selection** to return to plot‑based selection.
 
+### 2.5 Molecular Composition *(optional)*
 
-### 2.5 MD / m/z differences *(optional)*
+Enables **Molecular Composition** analysis by calculation of Double Bond Equivalnet (DBE) and
+ratios fo H/C and O/C from chemical formulas. The results are presented as two interactive plots, 
+one for DBE and one for H/C and O/C (Van Krevelen). Requires the feature list file to 
+contain chemical formulas information.
 
-Enable **Calculate Mass Defect Differences** to enter comma‑separated MD
+
+
+### 2.6 MD / m/z differences *(optional)*
+
+Enables calculation of **MD / m/z differences** by entering comma‑separated MD
 (mDa) and m/z (Da) pairs plus an m/z tolerance. Click **Calculate MD/mz
 Differences** to add `Δ → id` columns to the feature table and build a
 difference **network plot**.
@@ -220,10 +228,10 @@ difference **network plot**.
 -   The results table is **filtered by the network plot's selection**
     (lasso/box). Clear the selection to see all features.
 
-### 2.6 Sample comparison *(optional)*
+### 2.7 Sample comparison *(optional)*
 
-Enable **Enable sample comparison** to be able to compare selected features (from other plots) accross different samples.
-Choose the number of samples and selected the samples intesnity columns.
+Enables **sample comparison** to be able to compare selected features (from other plots) across different samples.
+Choose the number of samples and selected the samples intensity columns.
 Plot types: **Grouped bars** or **Lines + markers**.
 
 -   Plot is drawn on **Plot sample comparison**; settings apply on
@@ -234,7 +242,7 @@ Plot types: **Grouped bars** or **Lines + markers**.
 -   Legend format:
     `id=… | mz=… | rt=… | intensity=…`.
 
-### 2.7 Selection logic
+### 2.8 Selection logic
 
 The MD tab uses **unified selection priority**, backed by a
 `reactiveVal` + generation counter so **Reset selection**  clears
@@ -248,13 +256,13 @@ all linked plots and tables.
     comparison.
     
 
-### 2.8 Export
+### 2.9 Export
 
 **Export Data** downloads selected rows if any exist, otherwise the full
 filtered dataset. Includes all MD variables, homologue IDs, and CCS
 values if present.
 
-### 2.9 Mass Defect Equations
+### 2.10 Mass Defect Equations
 
 In all equations below, $\text{nom}(\cdot)$ denotes the **nominal-mass operator** and can be chosen as `round`, `ceiling`, or `floor`:
 
@@ -263,13 +271,13 @@ The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown 
 
 <p><b>OMD</b> — original mass defect</p>
 
-<p>$$ \text{OMD (mDa)} = (\text{round}(m) - m) \times 10^{3} $$</p>
+<p>$$ \text{OMD (mDa)} = (m - \text{round}(m)) \times 10^{3} $$</p>
 
-<p>(The OMD column is reported in milli‑Daltons — i.e. the raw mass defect is multiplied by $10^{3}$ and then rounded to the nearest integer using round‑half‑away‑from‑zero.)</p>
+<p>(The OMD column is reported in milli-Daltons - i.e. the raw mass defect is multiplied by $10^{3}$ and then rounded to the nearest integer using round-half-away-from-zero.)</p>
 
-<p><b>RMD</b> — relative mass defect</p>
+<p><b>RMD</b> - relative mass defect</p>
 
-<p>$$ \text{RMD (ppm)} = \frac{\text{round}(m) - m}{m} \times 10^{6} $$</p>
+<p>$$ \text{RMD (ppm)} = \frac{m - \text{round}(m)}{m} \times 10^{6} $$</p>
 
 <p><b>MD1</b> — first‑order MD with unit $u_1$</p>
 
@@ -302,7 +310,7 @@ The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown 
 -   `CH2/X` — **fractional base unit** with divisor `X`. Not combinable
     with subtraction. Example: `CH2/10`.
 
-### 2.10 Tips
+### 2.11 Tips
 
 -   **LC/GC‑HRMS**: RT trend = *increasing*; enable *Both (RT + CCS)*;
     spline R² \> 0.95 for a stricter monotonic trend.
@@ -312,6 +320,7 @@ The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown 
 -   **Direct infusion**: RT trend = *any*; spline R² = 0.
 -   Start with a wide **MD/mz difference tolerance** and tighten once
     you see which pairs actually link.
+
 
 </div>
 
@@ -436,7 +445,7 @@ adduct, its `ISF_annotation`, `ISF_NL_annotation` and all associated
 
 ### 3.6 Sample comparison *(optional)*
 
-Similar to the MD tab. Enable **Enable sample comparison** to be able to compare selected features (from other plots) across different samples.
+Similar to the MD tab. Enables **sample comparison** to be able to compare selected features (from other plots) across different samples.
 Choose the number of samples and selected the samples intesnity columns.
 Plot types: **Grouped bars** or **Lines + markers**.
 -   Plot is drawn on **Plot sample comparison**; settings apply on

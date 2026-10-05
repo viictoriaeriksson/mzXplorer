@@ -687,27 +687,51 @@ strict_rt_filter <- function(df, trend = NULL,
                 return(df)
         }
         
-        has_rt <- "rt" %in% names(df)
-        if (!has_rt) return(df)
+        # Enforce monotonicity on the dimension(s) the user actually
+        # selected. Previously ccs_mode was accepted but ignored, so a
+        # CCS-only run was still filtered on RT.
+        use_rt  <- ccs_mode %in% c("rt", "both")  && "rt"  %in% names(df)
+        use_ccs <- ccs_mode %in% c("ccs", "both") && "ccs" %in% names(df)
+        if (!use_rt && !use_ccs) return(df)
         
         sids <- unique(na.omit(df$series_id))
         if (!length(sids)) return(df)
+        
+        # Greedy forward scan: walk the series in ascending m/z and drop any
+        # member that breaks the trend relative to the last *kept* member.
+        # The previous implementation took a single diff() over the original
+        # sequence, so once an offending point was removed the remaining
+        # neighbours were never re-checked and non-monotonic series survived
+        # (e.g. rt = 1, 5, 2, 3 kept the 1 -> 5 -> 3 violation).
+        keep_monotonic <- function(v) {
+                n    <- length(v)
+                keep <- rep(TRUE, n)
+                last <- NA_real_
+                for (i in seq_len(n)) {
+                        vi <- v[i]
+                        if (!is.finite(vi)) { keep[i] <- FALSE; next }
+                        if (is.na(last)) { last <- vi; next }
+                        ok <- if (trend == "increasing") {
+                                vi >= last - 1e-12
+                        } else if (trend == "decreasing") {
+                                vi <= last + 1e-12
+                        } else TRUE
+                        if (ok) last <- vi else keep[i] <- FALSE
+                }
+                keep
+        }
         
         for (sid in sids) {
                 idx  <- which(df$series_id == sid)
                 comp <- df[idx, ]
                 comp <- comp[order(comp$mz), ]
                 
-                d_rt <- diff(comp$rt)
-                bad_rt <- if (trend == "increasing") {
-                        which(d_rt < 0)
-                } else if (trend == "decreasing") {
-                        which(d_rt > 0)
-                } else integer(0)
+                keep <- rep(TRUE, nrow(comp))
+                if (use_rt)  keep <- keep & keep_monotonic(comp$rt)
+                if (use_ccs) keep <- keep & keep_monotonic(comp$ccs)
                 
-                if (length(bad_rt)) {
-                        bad_pos  <- bad_rt + 1L
-                        drop_idx <- comp$series_id.index[bad_pos]
+                if (any(!keep)) {
+                        drop_idx <- comp$series_id.index[!keep]
                         df$series_id[df$series_id.index %in% drop_idx] <- NA_integer_
                 }
         }
@@ -962,3 +986,4 @@ find_homologues <- function(
         
         df
 }
+

@@ -28,6 +28,8 @@
   .mzx-sample  { background-color: #eafbe7; border-left-color: #2e8b57; }
   /* Export / full table (soft yellow) */
   .mzx-export  { background-color: #fffbe6; border-left-color: #c9a227; }
+  /* Molecular composition (pink / rose) */
+  .mzx-molcomp { background-color: #fbeaf2; border-left-color: #b8377a; }
 
   /* --- Tab-pane variants (mainPanel subtabs) ---
      Mirrors the .mzx-section palette for tab content panes.
@@ -46,6 +48,7 @@
   .mzx-pane.mzx-isf     { background-color: #e7f6f5; border-left-color: #2c8a86; }
   .mzx-pane.mzx-sample  { background-color: #eafbe7; border-left-color: #2e8b57; }
   .mzx-pane.mzx-export  { background-color: #fffbe6; border-left-color: #c9a227; }
+  .mzx-pane.mzx-molcomp { background-color: #fbeaf2; border-left-color: #b8377a; }
 
   /* DataTables & plotly overrides inside tab panes */
   .mzx-pane .dataTables_wrapper { background: transparent; }

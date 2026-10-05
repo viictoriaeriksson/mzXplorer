@@ -65,27 +65,47 @@ mass_defect_ui <- function(id) {
           condition = sprintf("input['%s'] == 'Homologue_series'", ns("result_sections")),
           div(class = "mzx-section mzx-homol",
             tags$h4("Homologue search"),
-            checkboxInput(ns("run_homol"), "Detect homologues in filtered data", FALSE),
-            conditionalPanel(
-              condition = sprintf("input['%s'] == true", ns("run_homol")),
-              textInput(ns("homol_unit"), "Repeating unit(s) — comma-separated (e.g. CH2, CF2, C2H4O)", value = "CH2"),
-              numericInput(ns("homol_ppm"), "m/z tolerance (ppm)", value = 5, min = 1, step = 1),
-              uiOutput(ns("ccs_block")),
-              numericInput(ns("homol_minlen"), "Minimum series length", value = 4, min = 3, step = 1),
-              numericInput(ns("homol_rttol"), "Per-step RT tolerance (same units as Rt); 0 = off", value = 0, min = 0, step = 0.1),
-              selectInput(ns("homol_rttrend"), "RT / CCS / ion mobility trend",
-                          choices  = c("increasing", "decreasing", "any"), selected = "increasing"),
-              checkboxInput(ns("homol_allow_gaps"), "Allow single gaps (k = 2)", FALSE),
-              numericInput(ns("homol_R2"), "Minimum spline R² (0 = off)", value = 0.98, min = 0, max = 1, step = 0.01),
-              actionButton(ns("go_homol"), "Calculate homologues", width = "100%", class = "btn-secondary"),
-              fluidRow(style = "margin-top:6px;",
-                column(12, actionButton(ns("cancel_homol"), "Cancel",
-                                       class = "btn-outline-warning btn-sm",
-                                       width = "100%"))
-              ),
-              tags$small(style = "color:#777;",
-                         "Cancel halts before the next processing phase; the graph search itself cannot be interrupted mid-run.")
-            )
+            textInput(ns("homol_unit"), "Repeating unit(s) — comma-separated (e.g. CH2, CF2, C2H4O)", value = "CH2"),
+            numericInput(ns("homol_ppm"), "m/z tolerance (ppm)", value = 5, min = 1, step = 1),
+            uiOutput(ns("ccs_block")),
+            numericInput(ns("homol_minlen"), "Minimum series length", value = 4, min = 3, step = 1),
+            numericInput(ns("homol_rttol"), "Per-step RT tolerance (same units as Rt); 0 = off", value = 0, min = 0, step = 0.1),
+            selectInput(ns("homol_rttrend"), "RT / CCS / ion mobility trend",
+                        choices  = c("increasing", "decreasing", "any"), selected = "increasing"),
+            checkboxInput(ns("homol_allow_gaps"), "Allow single gaps (k = 2)", FALSE),
+            numericInput(ns("homol_R2"), "Minimum spline R² (0 = off)", value = 0.98, min = 0, max = 1, step = 0.01),
+            actionButton(ns("go_homol"), "Calculate homologues", width = "100%", class = "btn-secondary"),
+            fluidRow(style = "margin-top:6px;",
+              column(12, actionButton(ns("cancel_homol"), "Cancel",
+                                     class = "btn-outline-warning btn-sm",
+                                     width = "100%"))
+            ),
+            tags$small(style = "color:#777;",
+                       "Cancel halts before the next processing phase; the graph search itself cannot be interrupted mid-run.")
+          )
+        ),
+
+        # --- Shown on "Molecular Composition" ---
+        conditionalPanel(
+          condition = sprintf("input['%s'] == 'Molecular_Composition'", ns("result_sections")),
+          div(class = "mzx-section mzx-molcomp",
+            tags$h4("Molecular composition"),
+            tags$small(style = "color:#555;",
+                       "Calculate DBE, and H/C and O/C ratios, if chemical formulas are present in feature file.. Plots DBE and Van Kreveln."),
+            tags$br(), tags$br(),
+            selectInput(ns("mc_ratio"), "Van Krevelen y-axis ratio",
+                        choices  = c("H/C", "F/C", "Br/C", "Cl/H"),
+                        selected = "H/C"),
+            actionButton(ns("plot_dbe_vk"),
+                         "Calculate DBE and Van Krevelen",
+                         width = "100%",
+                         style = "background-color:#b8377a; border-color:#b8377a; color:#fff; font-weight:600;"),
+            tags$br(), tags$br(),
+            uiOutput(ns("slide_nc")),
+            uiOutput(ns("slide_dbe")),
+            uiOutput(ns("slide_hc")),
+            uiOutput(ns("slide_oc")),
+            uiOutput(ns("mc_plot_btn"))
           )
         ),
 
@@ -94,18 +114,14 @@ mass_defect_ui <- function(id) {
           condition = sprintf("input['%s'] == 'MD_mz_differences'", ns("result_sections")),
           div(class = "mzx-section mzx-mdiff",
             tags$h4("MD / m/z differences"),
-            checkboxInput(ns("enable_md_diff"), "Calculate Mass Defect Differences", value = FALSE),
-            conditionalPanel(
-              condition = sprintf("input['%s'] == true", ns("enable_md_diff")),
-              textInput(ns("md_values"), "Mass Defect Differences, mDa (integers, comma-separated)",
-                        value = "-5, -16, 32",
-                        placeholder = "e.g., -5, -16, -24, 32, -43, 68"),
-              textInput(ns("mz_values"), "m/z Differences, Da (comma-separated)",
-                        value = "15.9949, -2.0157, 176.0321",
-                        placeholder = "e.g., 15.9949, -2.0157, -15.0235, 176.0321, 79.9568, 305.0682"),
-              numericInput(ns("MZtolerance"), "m/z difference tolerance (Da)", value = 0.01, min = 0, step = 0.01),
-              actionButton(ns("MDcalculate"), "Calculate MD/mz Differences", width = "100%", class = "btn-warning")
-            )
+            textInput(ns("md_values"), "Mass Defect Differences, mDa (integers, comma-separated)",
+                      value = "-5, -16, 32",
+                      placeholder = "e.g., -5, -16, -24, 32, -43, 68"),
+            textInput(ns("mz_values"), "m/z Differences, Da (comma-separated)",
+                      value = "15.9949, -2.0157, 176.0321",
+                      placeholder = "e.g., 15.9949, -2.0157, -15.0235, 176.0321, 79.9568, 305.0682"),
+            numericInput(ns("MZtolerance"), "m/z difference tolerance (Da)", value = 0.01, min = 0, step = 0.01),
+            actionButton(ns("MDcalculate"), "Calculate MD/mz Differences", width = "100%", class = "btn-warning")
           )
         ),
 
@@ -114,21 +130,17 @@ mass_defect_ui <- function(id) {
           condition = sprintf("input['%s'] == 'Sample_comparison'", ns("result_sections")),
           div(class = "mzx-section mzx-sample",
             tags$h4("Sample comparison"),
-            checkboxInput(ns("enable_sample_comp"), "Enable sample comparison", value = FALSE),
-            conditionalPanel(
-              condition = sprintf("input['%s'] == true", ns("enable_sample_comp")),
-              tags$small(style = "color:#555;",
-                         "Assign one column per sample. The plot shows those values for the currently selected feature(s)."),
-              tags$br(), tags$br(),
-              numericInput(ns("n_samples"), "Number of samples", value = 2, min = 2, max = 20, step = 1),
-              uiOutput(ns("sample_slots_ui")),
-              selectInput(ns("sample_plot_type"), "Plot type",
-                          choices = c("Grouped bars" = "bar",
-                                      "Lines + markers" = "line"),
-                          selected = "bar"),
-              actionButton(ns("go_sample_comp"), "Plot sample comparison",
-                           width = "100%", class = "btn-secondary")
-            )
+            tags$small(style = "color:#555;",
+                       "Assign one column per sample. The plot shows those values for the currently selected feature(s)."),
+            tags$br(), tags$br(),
+            numericInput(ns("n_samples"), "Number of samples", value = 2, min = 2, max = 20, step = 1),
+            uiOutput(ns("sample_slots_ui")),
+            selectInput(ns("sample_plot_type"), "Plot type",
+                        choices = c("Grouped bars" = "bar",
+                                    "Lines + markers" = "line"),
+                        selected = "bar"),
+            actionButton(ns("go_sample_comp"), "Plot sample comparison",
+                         width = "100%", class = "btn-secondary")
           )
         ),
 
@@ -166,6 +178,20 @@ mass_defect_ui <- function(id) {
               ),
               tags$br(),
               DT::DTOutput(ns("homol_table"))
+            )
+          ),
+          tabPanel(
+            "Molecular Composition", value = "Molecular_Composition",
+            div(class = "mzx-pane mzx-molcomp",
+              tags$h4("Molecular composition: DBE and Van Krevelen"),
+              tags$small(style = "color:#555;",
+                         ""),
+              tags$br(), tags$br(),
+              uiOutput(ns("mc_filter_ui")),
+              fluidRow(
+                column(6, plotly::plotlyOutput(ns("dbe_plot"), height = "450px")),
+                column(6, plotly::plotlyOutput(ns("vk_plot"),  height = "450px"))
+              )
             )
           ),
           tabPanel(
@@ -294,7 +320,9 @@ mass_defect_server <- function(id) {
         selectInput(ns("map_id"),        "ID column (optional)",  choices = choices,
                     selected = if (!is.na(defaults$id))        defaults$id        else "(none)"),
         selectInput(ns("map_ccs"),       "CCS / ion mobility column (optional)", choices = choices,
-                    selected = if (!is.na(defaults$ccs))       defaults$ccs       else "(none)")
+                    selected = if (!is.na(defaults$ccs))       defaults$ccs       else "(none)"),
+        selectInput(ns("map_formulas"),  "Chemical formula column (optional)", choices = choices,
+                    selected = if (!is.na(defaults$formulas))  defaults$formulas  else "(none)")
       )
     })
 
@@ -337,7 +365,8 @@ mass_defect_server <- function(id) {
         rt        = pick(input$map_rt,        g$rt),
         intensity = pick(input$map_intensity, g$intensity),
         id        = pick(input$map_id,        g$id),
-        ccs       = pick(input$map_ccs,       g$ccs)
+        ccs       = pick(input$map_ccs,       g$ccs),
+        formulas  = pick(input$map_formulas,  g$formulas)
       )
     })
 
@@ -365,7 +394,7 @@ mass_defect_server <- function(id) {
 
       if (!"id" %in% names(df)) df$id <- seq_len(nrow(df))
 
-      df$RMD_ppm <- round((round(df$mz) - df$mz) / df$mz * 1e6)
+      df$RMD_ppm <- round((df$mz - round(df$mz)) / df$mz * 1e6)
       # OMD is stored as an INTEGER mDa using "round half away from
       # zero" (sign(x) * floor(abs(x) + 0.5)). This is the single
       # source of truth for both:
@@ -375,7 +404,7 @@ mass_defect_server <- function(id) {
       # would silently disagree with the display for exact-half values
       # such as -136.5 (banker's gives -136, display shows -137) and
       # produce phantom pairs.
-      raw_omd <- (round(df$mz) - df$mz) * 1e3
+      raw_omd <- (df$mz - round(df$mz)) * 1e3
       df$OMD_mDa <- as.integer(sign(raw_omd) * floor(abs(raw_omd) + 0.5))
       df
     })
@@ -401,26 +430,33 @@ mass_defect_server <- function(id) {
       if (!has_ccs()) {
         tagList(tags$h5("CCS / ion mobility rules"),
                 tags$small(style = "color:#777;",
-                           "No CCS or ion mobility column mapped."))
+                           "No CCS or ion mobility column mapped; homologue detection will use RT only."))
       } else {
         tagList(
           checkboxInput(ns("use_ccs_toggle"),
-                        "Enable CCS / ion mobility-based homologue rules",
+                        "Enable CCS / ion mobility drift time homologue rules",
                         value = FALSE),
-          conditionalPanel(
-            condition = sprintf("input['%s'] == true", ns("use_ccs_toggle")),
-            radioButtons(ns("homol_ccs_mode"),
-                         "Use which dimension for homologue trend?",
-                         choices = c("RT only"                 = "rt",
-                                     "CCS / ion mobility only" = "ccs",
-                                     "RT + CCS / ion mobility" = "both"),
-                         selected = "ccs", inline = FALSE),
-            numericInput(ns("homol_ccstol"),
-                         "CCS / ion mobility tolerance (per step)",
-                         value = 0, min = 0, step = 0.1)
-          )
+          uiOutput(ns("ccs_mode_ui")),
+          uiOutput(ns("ccs_tol_ui"))
         )
       }
+    })
+
+    output$ccs_mode_ui <- renderUI({
+      req(has_ccs(), isTRUE(input$use_ccs_toggle))
+      radioButtons(ns("ccs_mode"),
+                   "Use which dimension for homologue trend?",
+                   choices = c("RT only"                       = "rt",
+                               "CCS / ion mobility only"       = "ccs",
+                               "Both RT + CCS / ion mobility"  = "both"),
+                   selected = "ccs")
+    })
+
+    output$ccs_tol_ui <- renderUI({
+      req(has_ccs(), isTRUE(input$use_ccs_toggle))
+      numericInput(ns("homol_ccstol"),
+                   "Per-step CCS / ion mobility tolerance (same units as the mapped column); 0 = off",
+                   value = 0, min = 0, step = 0.1)
     })
     
     output$slide1 <- renderUI({ df <- MD_data_raw(); sliderInput(ns("slide1"), "Intensity range", min = min(df$intensity, na.rm=T), max = max(df$intensity, na.rm=T), value = range(df$intensity, na.rm=T)) })
@@ -429,7 +465,6 @@ mass_defect_server <- function(id) {
     
     output$plotctr <- renderUI({
       df <- MD_data_raw()
-      axis_choices <- unique(names(df))
       tagList(
         fluidRow(
           column(6, selectInput(ns('filter_col'),
@@ -437,10 +472,10 @@ mass_defect_server <- function(id) {
                                 choices = c("(none)", names(df)), selected = "(none)"))
         ),
         fluidRow(
-          column(3, selectInput(ns('xvar1'), 'X variable Plot 1', choices = axis_choices, selected = "rt")),
-          column(3, selectInput(ns('yvar1'), 'Y variable Plot 1', choices = axis_choices, selected = "mz")),
-          column(3, selectInput(ns('xvar2'), 'X variable Plot 2', choices = axis_choices, selected = "RMD_ppm")),
-          column(3, selectInput(ns('yvar2'), 'Y variable Plot 2', choices = axis_choices, selected = "mz"))
+          column(3, selectInput(ns('xvar1'), 'X variable Plot 1', choices = names(df), selected = "rt")),
+          column(3, selectInput(ns('yvar1'), 'Y variable Plot 1', choices = names(df), selected = "mz")),
+          column(3, selectInput(ns('xvar2'), 'X variable Plot 2', choices = names(df), selected = "RMD_ppm")),
+          column(3, selectInput(ns('yvar2'), 'Y variable Plot 2', choices = names(df), selected = "mz"))
         )
       )
     })
@@ -532,10 +567,6 @@ mass_defect_server <- function(id) {
     # --- Homologue Search Action (independent button) ---
     observeEvent(input$go_homol, {
       req(vals$m)
-      if (!isTRUE(input$run_homol)) {
-        showNotification("Enable 'Detect homologues in filtered data' first.", type = "warning")
-        return()
-      }
       cancel_homol(FALSE)
 
       withProgress(message = "Homologue search", value = 0, {
@@ -563,6 +594,23 @@ mass_defect_server <- function(id) {
         incProgress(0.05, detail = sprintf("Searching %d repeating unit(s): %s",
                                            length(units), paste(units, collapse = ", ")))
 
+        # Resolve the CCS / ion mobility trend mode once. The radio only
+        # exists while the toggle is on, so fall back to RT-only whenever
+        # CCS is unavailable or the toggle is off.
+        ccs_mode_sel <- if (!isTRUE(has_ccs()) || !isTRUE(input$use_ccs_toggle)) {
+          "rt"
+        } else if (is.null(input$ccs_mode)) {
+          "rt"
+        } else {
+          input$ccs_mode
+        }
+        ccs_tol_sel <- if (!isTRUE(has_ccs()) || !isTRUE(input$use_ccs_toggle)) {
+          0
+        } else {
+          v <- input$homol_ccstol
+          if (is.null(v) || is.na(v)) 0 else v
+        }
+
         # Initialise result columns as NA.
         m_full$series_id   <- NA_integer_
         m_full$series_unit <- NA_character_
@@ -586,15 +634,8 @@ mass_defect_server <- function(id) {
                             min_length = input$homol_minlen,
                             rt_trend = input$homol_rttrend,
                             R2_min = input$homol_R2,
-                            ccs_mode = {
-                              if (isTRUE(input$use_ccs_toggle)) {
-                                m <- input$homol_ccs_mode
-                                if (!is.null(m) && nzchar(m)) m else "ccs"
-                              } else "rt"
-                            },
-                            ccs_tol  = {
-                              if (isTRUE(input$use_ccs_toggle)) input$homol_ccstol else 0
-                            }),
+                            ccs_mode = ccs_mode_sel,
+                            ccs_tol  = ccs_tol_sel),
             error = function(e) {
               showNotification(sprintf("Unit '%s' failed: %s", u, conditionMessage(e)),
                                type = "error", duration = 8)
@@ -737,8 +778,12 @@ mass_defect_server <- function(id) {
       df_all <- as.data.frame(vals$m)
 
       # Plot-driven selection: filter table to selected rows only.
+      # Homologue-table-driven selection: filter to the keys of the
+      # selected series (vals$series_keys populated by homol_table).
       # Otherwise (initial or reset): show ALL rows.
-      if (length(sel_keys) && identical(src, "plot")) {
+      if (!is.null(vals$series_keys) && length(vals$series_keys)) {
+        df <- df_all[df_all$.key %in% vals$series_keys, , drop = FALSE]
+      } else if (length(sel_keys) && identical(src, "plot")) {
         df <- df_all[df_all$.key %in% sel_keys, , drop = FALSE]
       } else {
         df <- df_all
@@ -747,6 +792,12 @@ mass_defect_server <- function(id) {
       # Reorder columns: identity first, then MD-derived columns,
       # then homologue/CCS-related, then everything else. Drop the
       # internal crosstalk key from the visible table.
+      # Also drop series_id / series_unit entirely if no homologue search
+      # has been run (i.e. those columns are all NA), so the table
+      # doesn't advertise columns the user hasn't populated yet.
+      for (sc in c("series_id", "series_unit")) {
+        if (sc %in% names(df) && all(is.na(df[[sc]]))) df[[sc]] <- NULL
+      }
       nms <- setdiff(names(df), ".key")
       identity_cols <- intersect(c("id", "mz", "rt", "intensity"), nms)
       md_cols       <- intersect(c("OMD_mDa", "RMD_ppm"), nms)
@@ -799,9 +850,29 @@ mass_defect_server <- function(id) {
     
     output$barplot <- plotly::renderPlotly({
       req(vals$m); sel_keys <- selected_keys()
-      df <- if (length(sel_keys)) vals$m[vals$m$.key %in% sel_keys, ] else return(NULL)
+      if (!length(sel_keys)) return(NULL)
+      df <- vals$m[vals$m$.key %in% sel_keys, ]
+      if (!nrow(df)) return(NULL)
+      # The intensity selector lives in a lazily-rendered uiOutput, so it can
+      # still be NULL (or point at a stale column) at the moment a series is
+      # selected. Fall back to "intensity" / the first numeric column instead
+      # of erroring out, which previously left the bar plot blank.
       selvar <- input$selectintensity
-      rel_y <- df[[selvar]] / max(df[[selvar]], na.rm = TRUE) * 100
+      if (is.null(selvar) || !nzchar(selvar) || !(selvar %in% names(df)) ||
+          !is.numeric(df[[selvar]])) {
+        selvar <- if ("intensity" %in% names(df) && is.numeric(df[["intensity"]])) {
+          "intensity"
+        } else {
+          num_nm <- names(df)[vapply(df, is.numeric, logical(1))]
+          num_nm <- setdiff(num_nm, c("id", "series_id"))
+          if (length(num_nm)) num_nm[1] else NULL
+        }
+      }
+      if (is.null(selvar)) return(NULL)
+      yv  <- suppressWarnings(as.numeric(df[[selvar]]))
+      mx  <- suppressWarnings(max(yv, na.rm = TRUE))
+      if (!is.finite(mx) || mx <= 0) return(NULL)
+      rel_y <- yv / mx * 100
       plotly::plot_ly(df, x = ~mz, y = rel_y, type = "bar",
                       marker = list(color = "#0072B2",
                                     line = list(color = "#003c62", width = 0.4)),
@@ -1274,7 +1345,7 @@ mass_defect_server <- function(id) {
       req(raw_input(), input$n_samples)
       nms <- names(raw_input())
       mapped <- unique(c(input$map_mz, input$map_rt, input$map_intensity,
-                         input$map_id, input$map_ccs))
+                         input$map_id, input$map_ccs, input$map_formulas))
       mapped <- mapped[nzchar(mapped) & mapped != "(none)"]
       numeric_cols <- nms[vapply(nms,
                                  function(cn) is.numeric(raw_input()[[cn]]),
@@ -1328,7 +1399,7 @@ mass_defect_server <- function(id) {
     })
 
     output$sample_comp_plot <- plotly::renderPlotly({
-      req(input$enable_sample_comp, vals$m)
+      req(vals$m)
       s <- sample_settings()
       req(s, s$sm)
       keys <- selected_keys()
@@ -1349,7 +1420,143 @@ mass_defect_server <- function(id) {
     })
 
     ##########################################################                
-    
+
+    # ---- Molecular Composition tab (DBE + Van Krevelen) ----
+    molcomp_ready <- reactiveVal(FALSE)
+
+    observeEvent(input$plot_dbe_vk, {
+      if (is.null(vals$m)) {
+        showNotification("Press 'Plot' on the Mass Defect subtab first, then compute molecular composition.",
+                         type = "warning"); return()
+      }
+      m <- vals$m
+      if (!"formulas" %in% names(m)) {
+        showNotification("No Chemical formula column mapped. Map one in Column Mapping (Mass Defect tab), then press Process + Plot.",
+                         type = "error"); return()
+      }
+      comp <- compute_molcomp(as.character(m$formulas))
+      m$DBE      <- comp$DBE
+      m$HC_ratio <- comp$HC_ratio
+      m$OC_ratio <- comp$OC_ratio
+      m$n_C      <- comp$C
+      rsel <- if (is.null(input$mc_ratio)) "H/C" else input$mc_ratio
+      num_den <- strsplit(rsel, "/", fixed = TRUE)[[1]]
+      num <- comp[[num_den[1]]]
+      den <- comp[[num_den[2]]]
+      m$VK_ratio <- ifelse(is.finite(den) & den > 0, num / den, NA_real_)
+      vals$mc_ratio_label <- rsel
+      vals$m <- m
+      molcomp_ready(TRUE)
+      showNotification(sprintf("Molecular composition computed for %d features (Van Krevelen y-axis: %s).",
+                               sum(!is.na(comp$DBE)), rsel), type = "message")
+    })
+
+    observeEvent(input$go_process, { molcomp_ready(FALSE); mc_plot_data(NULL) }, ignoreInit = TRUE)
+
+    output$mc_filter_ui <- renderUI({
+      req(molcomp_ready(), vals$m)
+      fluidRow(
+        column(6, selectInput(ns("mc_filter_col"),
+                              "Filter by sample (select sample column). Filter applies to both plots.",
+                              choices = c("(none)", names(vals$m)), selected = "(none)"))
+      )
+    })
+    output$slide_nc <- renderUI({
+      req(molcomp_ready(), vals$m); v <- vals$m$n_C
+      v <- v[is.finite(v)]; if (!length(v)) return(NULL)
+      sliderInput(ns("mc_nc"), "Number of Carbons range",
+                  min = min(v), max = max(v), value = range(v), step = 1)
+    })
+    output$slide_dbe <- renderUI({
+      req(molcomp_ready(), vals$m); v <- vals$m$DBE
+      v <- v[is.finite(v)]; if (!length(v)) return(NULL)
+      sliderInput(ns("mc_dbe"), "DBE range",
+                  min = floor(min(v)), max = ceiling(max(v)),
+                  value = c(floor(min(v)), ceiling(max(v))), step = 0.5)
+    })
+    output$slide_hc <- renderUI({
+      req(molcomp_ready(), vals$m); v <- vals$m$VK_ratio
+      v <- v[is.finite(v)]; if (!length(v)) return(NULL)
+      lbl <- paste0(vals$mc_ratio_label, " ratio range")
+      hi  <- ceiling(max(v) * 10) / 10
+      if (!is.finite(hi) || hi <= 0) hi <- 1
+      sliderInput(ns("mc_hc"), lbl, min = 0, max = hi,
+                  value = c(0, hi), step = 0.05)
+    })
+    output$slide_oc <- renderUI({
+      req(molcomp_ready(), vals$m); v <- vals$m$OC_ratio
+      v <- v[is.finite(v)]; if (!length(v)) return(NULL)
+      sliderInput(ns("mc_oc"), "O/C ratio range",
+                  min = 0, max = ceiling(max(v) * 10) / 10,
+                  value = c(0, ceiling(max(v) * 10) / 10), step = 0.05)
+    })
+
+    # Plot button appears below the sliders once composition is computed.
+    output$mc_plot_btn <- renderUI({
+      req(molcomp_ready())
+      actionButton(ns("mc_plot"), "Plot", width = "100%",
+                   style = "background-color:#b8377a; border-color:#b8377a; color:#fff; font-weight:600;")
+    })
+
+    mc_plot_data <- reactiveVal(NULL)
+
+    observeEvent(input$mc_plot, {
+      req(molcomp_ready(), vals$m)
+      d <- as.data.frame(.apply_col_filter(vals$m, input$mc_filter_col))
+      d <- d[!is.na(d$DBE) & !is.na(d$VK_ratio) & !is.na(d$OC_ratio) &
+             is.finite(d$n_C), , drop = FALSE]
+      if (!is.null(input$mc_nc))
+        d <- d[d$n_C >= input$mc_nc[1] & d$n_C <= input$mc_nc[2], ]
+      if (!is.null(input$mc_dbe))
+        d <- d[d$DBE >= input$mc_dbe[1] & d$DBE <= input$mc_dbe[2], ]
+      if (!is.null(input$mc_hc))
+        d <- d[d$VK_ratio >= input$mc_hc[1] & d$VK_ratio <= input$mc_hc[2], ]
+      if (!is.null(input$mc_oc))
+        d <- d[d$OC_ratio >= input$mc_oc[1] & d$OC_ratio <= input$mc_oc[2], ]
+      mc_plot_data(d)
+    })
+
+    output$dbe_plot <- plotly::renderPlotly({
+      d <- mc_plot_data()
+      req(!is.null(d))
+      if (!nrow(d)) return(plotly::plot_ly() %>%
+                             plotly::layout(title = "No features in current ranges."))
+      sd <- crosstalk::SharedData$new(d, key = ~.key, group = ns("md"))
+      make_mdplot(sd, "n_C", "DBE",
+                  "Number of Carbons", "DBE",
+                  intensity_enabled = FALSE, intensity_col = NULL,
+                  series_sel = NULL, series_cols = NULL,
+                  show_legend = isTRUE(input$show_leg),
+                  source_id = ns("dbe"),
+                  sel_keys = sel_keys_rv()) %>%
+        plotly::layout(title = list(text = "DBE"))
+    })
+
+    output$vk_plot <- plotly::renderPlotly({
+      d <- mc_plot_data()
+      req(!is.null(d))
+      if (!nrow(d)) return(plotly::plot_ly() %>%
+                             plotly::layout(title = "No features in current ranges."))
+      sd <- crosstalk::SharedData$new(d, key = ~.key, group = ns("md"))
+      ylab <- isolate(vals$mc_ratio_label)
+      if (is.null(ylab)) ylab <- "H/C"
+      make_mdplot(sd, "OC_ratio", "VK_ratio",
+                  "O / C", ylab,
+                  intensity_enabled = FALSE, intensity_col = NULL,
+                  series_sel = NULL, series_cols = NULL,
+                  show_legend = isTRUE(input$show_leg),
+                  source_id = ns("vk"),
+                  sel_keys = sel_keys_rv()) %>%
+        plotly::layout(title = list(text = "Van Krevelen"))
+    })
+
+    observeEvent(plotly::event_data("plotly_selected", source = ns("dbe")),
+                 .apply_sel(plotly::event_data("plotly_selected", source = ns("dbe"))),
+                 ignoreNULL = FALSE, ignoreInit = TRUE)
+    observeEvent(plotly::event_data("plotly_selected", source = ns("vk")),
+                 .apply_sel(plotly::event_data("plotly_selected", source = ns("vk"))),
+                 ignoreNULL = FALSE, ignoreInit = TRUE)
+
     })
 }
 
@@ -1420,6 +1627,7 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
                                           group = shared_data$groupName())
     fig <- fig %>% plotly::add_markers(
       data = sd_unsel,
+      type = "scattergl",
       x = as.formula(paste0("~", xvar)),
       y = as.formula(paste0("~", yvar)),
       key = ~.key,
@@ -1432,6 +1640,7 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
   if (nrow(df_sel)) {
     fig <- fig %>% plotly::add_markers(
       data = df_sel,
+      type = "scattergl",
       x = df_sel[[xvar]], y = df_sel[[yvar]],
       marker = marker_sel, name = "Selected", showlegend = show_legend,
       hovertemplate = paste0("<b>id</b>=%{customdata}<br>",

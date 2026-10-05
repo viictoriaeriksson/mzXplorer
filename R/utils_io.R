@@ -209,7 +209,7 @@ read_feature_file <- function(path, orig_name = NULL) {
 }
 
 #' Guess which of a file's columns map to internal targets
-#' (mz, rt, intensity, id, ccs). Returns a named list; entries are NA
+#' (mz, rt, intensity, id, ccs, formulas). Returns a named list; entries are NA
 #' when no confident match is found.
 #' @param col_names character vector of the file's column names
 #' @export
@@ -230,14 +230,25 @@ guess_default_mapping <- function(col_names) {
                   # ion mobility descriptors — treated equivalently downstream
                   "ion_mobility", "ion mobility", "ion.mobility",
                   "mobility", "drift_time", "drift time", "drift.time",
-                  "dt", "1/k0", "1/k_0", "k0", "k_0", "im")
+                  "dt", "1/k0", "1/k_0", "k0", "k_0", "im"),
+    formulas  = c("formula", "formulas", "chemical_formula", "chemical formula",
+                  "chemicalformula", "chemicalformulas",
+                  "molecular_formula", "molecular formula",
+                  "molecularformula", "molecularformulas",
+                  "mol_formula", "molformula")
   )
   out <- list(mz = NA_character_, rt = NA_character_,
               intensity = NA_character_, id = NA_character_,
-              ccs = NA_character_)
+              ccs = NA_character_, formulas = NA_character_)
   for (tgt in names(patterns)) {
     hit <- which(low %in% tolower(patterns[[tgt]]))
     if (length(hit)) out[[tgt]] <- col_names[hit[1]]
+  }
+  # Fallback: any column whose name contains "formula" (case-insensitive)
+  # is treated as a Chemical Formula column when no exact match was found.
+  if (is.na(out$formulas)) {
+    hit <- grep("formula", low, fixed = FALSE)
+    if (length(hit)) out$formulas <- col_names[hit[1]]
   }
   out
 }
@@ -246,7 +257,7 @@ guess_default_mapping <- function(col_names) {
 #' Only renames columns; extra columns are preserved. "(none)" / NA entries
 #' are skipped. Ensures a 1-based `id` column if none was supplied.
 #' @param df data.table or data.frame
-#' @param mapping named list with entries mz, rt, intensity, id, ccs
+#' @param mapping named list with entries mz, rt, intensity, id, ccs, formulas
 #' @export
 apply_column_mapping <- function(df, mapping) {
   if (!data.table::is.data.table(df)) data.table::setDT(df)
@@ -255,16 +266,12 @@ apply_column_mapping <- function(df, mapping) {
     if (is.null(src) || is.na(src) || !nzchar(src) || identical(src, "(none)")) next
     if (!src %in% names(df)) next
     if (identical(src, tgt)) next
-    # Copy the source column to the canonical target name instead of
-    # renaming, so the user's original column name is still visible in
-    # downstream UIs (e.g. axis dropdowns) alongside the canonical alias.
-    # If a column with the target name already exists (e.g. an unrelated
-    # column that happens to be called "id"), rename that one out of the
-    # way first to avoid collision.
+    # If a column already exists with the target name (e.g. an unrelated
+    # column that happens to be called "id"), rename it out of the way.
     if (tgt %in% names(df)) {
       data.table::setnames(df, tgt, paste0(tgt, "_orig"))
     }
-    df[, (tgt) := df[[src]]]
+    data.table::setnames(df, src, tgt)
   }
   if (!"id" %in% names(df)) df[, id := .I]
   df
