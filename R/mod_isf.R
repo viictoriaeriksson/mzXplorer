@@ -14,8 +14,7 @@ isf_ui <- function(id) {
         fileInput(ns('file_frag'), 'Choose Fragment File (.mgf/ .msp)', accept = c('.mgf', '.msp')),
         uiOutput(ns("file_frag_status")),
 
-        # --- Shown on "Plots & Table" — static subtab (ISF Processing + Column Mapping) ---
-        # Static UI (no renderUI) so Process/Plot input IDs are bound immediately.
+        # --- Shown on "Plots & Table" — 
         conditionalPanel(
           condition = sprintf("input['%s'] == 'Plots_Table'", ns("result_sections")),
           tabsetPanel(type = "pills", id = ns("plot_tab_subtabs"),
@@ -180,13 +179,8 @@ isf_server <- function(id) {
     ns <- session$ns
     
     vals <- reactiveValues(d = NULL, df_annotated = NULL, df_filtered = NULL, orig_df = NULL)
-    # Snapshot of sizing settings captured at the moment of the last Plot
-    # click; renderers read this instead of input$ins directly so the
-    # checkbox only takes effect on the next Plot press.
     isf_size_state <- reactiveVal(list(enabled = FALSE, col = NULL))
 
-    # --- Filter helper: keep rows where the chosen column has data
-    # (not NA, and > 0 if numeric). "(none)" or empty -> unchanged.
     .apply_col_filter <- function(df, col) {
       if (is.null(df) || !nrow(df)) return(df)
       if (is.null(col) || !length(col) || col %in% c("", "(none)") ||
@@ -200,8 +194,6 @@ isf_server <- function(id) {
     # --- File upload status badges ---
     # Small green "read OK" / red "read failed" indicator that appears
     # under each fileInput as soon as the file has been fully uploaded
-    # AND parsed. This gives clear visual confirmation that heavy work
-    # can start, rather than relying on the (subtle) native progress bar.
     .status_ok <- function(msg) {
       div(style = "margin: -8px 0 10px 2px; color: #2e7d32; font-size: 12px;",
           tags$span(style = "font-weight: 600;", "\u2714 "), msg)
@@ -228,10 +220,6 @@ isf_server <- function(id) {
                          format(ncol(df), big.mark = " ")))
     })
 
-    # For the fragment file we only know it's "ready" once we've
-    # actually parsed it (heavy). Rather than parse eagerly on every
-    # upload (which would defeat the point of the Process button), we
-    # just show file size + name once the upload itself has completed.
     output$file_frag_status <- renderUI({
       f <- input$file_frag
       if (is.null(f)) return(NULL)
@@ -246,8 +234,6 @@ isf_server <- function(id) {
     })
     
     # --- Column mapping ---
-    # Read the feature CSV once when uploaded so we can offer the user a
-    # column-mapping UI (their column names -> internal targets mz/rt/etc.).
     feat_raw <- reactive({
       req(input$file_feat)
       df <- read_feature_file(input$file_feat$datapath,
@@ -283,14 +269,8 @@ isf_server <- function(id) {
       )
     })
 
-    # (plot_tab_subtabs_ui is now static UI in isf_ui — no renderUI here.)
 
     # --- Cancel flag for long ISF processing runs.
-    # NOTE: R runs synchronously on a single thread, so this flag can
-    # only be checked BETWEEN phases (before we hand off to the heavy
-    # C-level data.table join). It cannot interrupt an already-running
-    # annotate_isf() call. If a run is truly stuck, use the "Reload
-    # session" escape hatch below.
     cancel_isf <- reactiveVal(FALSE)
     observeEvent(input$cancel_isf, {
       cancel_isf(TRUE)
@@ -309,9 +289,6 @@ isf_server <- function(id) {
         showNotification("Please upload a fragment file first.",
                          type = "warning", duration = 4); return()
       }
-      # If the column-mapping renderUI has not yet round-tripped to the
-      # client (fast first click), `input$map_*` will be NULL. Fall back
-      # to the auto-guessed mapping so that a single click is enough.
       df_names <- names(feat_raw())
       guess    <- guess_default_mapping(df_names)
       pick     <- function(inp, guess_val) {
@@ -333,7 +310,7 @@ isf_server <- function(id) {
                                 ". Please set them in the Column mapping panel."),
                          type = "warning", duration = 6); return()
       }
-      cancel_isf(FALSE)  # reset at the start of each run
+      cancel_isf(FALSE) 
 
       withProgress(message = "Annotating ISF...", value = 0, {
         incProgress(0.05, detail = "Loading feature file...")
@@ -398,12 +375,9 @@ isf_server <- function(id) {
         # Match-phase progress: annotate_isf drives us via a callback so
         # the user sees per-chunk detail like "Chunk 4/12 done - 12,431
         # partial matches".
-        # Total budget for the match phase inside the progress bar:
         match_budget <- 0.65
         match_state <- list(spent = 0)
         prog_cb <- function(phase, i, n, detail) {
-          # Distribute the budget roughly across the phases:
-          # build_peaks(5%) + match(85%) + filter(5%) + aggregate(5%)
           step <- switch(phase,
                          build_peaks = match_budget * 0.05 / max(1, n),
                          match       = match_budget * 0.85 / max(1, n),
@@ -445,7 +419,7 @@ isf_server <- function(id) {
           })
         vals$df_annotated <- annotated
 
-        # Ensure the bar tops out at 100% regardless of chunk-rounding.
+        # Ensure the bar tops out at 100%.
         remaining <- max(0, 1 - 0.05 - 0.05 - 0.15 - match_state$spent - 0.05)
         is_frag_hit <- annotated$ISF_annotation != "not ISF"
         is_nl_hit   <- if (!is.null(annotated$ISF_NL_annotation)) annotated$ISF_NL_annotation != "not ISF" else rep(FALSE, nrow(annotated))
@@ -491,8 +465,6 @@ isf_server <- function(id) {
     output$plot_controls <- renderUI({
       req(vals$df_annotated); df <- vals$df_annotated
       nms <- names(df)
-      # All columns are valid axis choices. Long categorical labels (e.g.
-      # `ISF_annotation`) are truncated at draw time in make_isf_scatter().
       pick <- function(preferred, i) {
         if (preferred %in% nms) preferred
         else nms[min(i, length(nms))]
@@ -513,7 +485,6 @@ isf_server <- function(id) {
     })
     
     observeEvent(input$go_plot, {
-      # Friendly checks (avoid silent `req()` halts).
       if (is.null(vals$df_annotated)) {
         showNotification("Please click Process first to annotate ISF, then Plot.",
                          type = "warning", duration = 5); return()
@@ -549,8 +520,6 @@ isf_server <- function(id) {
         incProgress(0.3, detail = "Building SharedData for linked selection...")
         vals$df_filtered <- df
         vals$d <- crosstalk::SharedData$new(df, key = ~.key, group = ns("isf"))
-        # Snapshot the "Show intensity as size" setting at Plot-time so
-        # the checkbox only takes effect on the next Plot press (not live).
         isf_size_state(list(
           enabled = isTRUE(input$ins),
           col     = if ("intensity" %in% names(df)) "intensity" else NULL
@@ -616,17 +585,10 @@ isf_server <- function(id) {
       })
     })
     
-    # --- Selection tracking (backed by reactiveVal so it can be reset) ---
     sel_keys_rv  <- reactiveVal(character(0))
     sel_gen_isf  <- reactiveVal(0L)
-    # Which "source" last drove sel_keys_rv? Used as a re-render guard so
-    # updating a table's pre-selection from a plot pick doesn't immediately
-    # echo back into sel_keys_rv from the row-selection observer.
     sel_source   <- reactiveVal("init")
 
-    # Independent per-plot observers so a fresh selection on one plot fully
-    # REPLACES the previous selection instead of unioning with stale keys
-    # from the other (event_data is sticky per source).
     .apply_sel_isf <- function(ed) {
       new_keys <- if (!is.null(ed) && length(ed$key))
         unique(as.character(ed$key)) else character(0)
@@ -643,9 +605,6 @@ isf_server <- function(id) {
                  .apply_sel_isf(plotly::event_data("plotly_selected", source = ns("isfnet"))),
                  ignoreNULL = FALSE, ignoreInit = TRUE)
 
-    # Selection from the ISF ratio plot: each point represents a
-    # (fragment, precursor) pair - the `.key` we attach is the fragment
-    # feature's .key so it lights up in the network + scatter plots.
     observeEvent(plotly::event_data("plotly_selected", source = ns("isfratio")),
                  .apply_sel_isf(plotly::event_data("plotly_selected", source = ns("isfratio"))),
                  ignoreNULL = FALSE, ignoreInit = TRUE)
@@ -667,7 +626,6 @@ isf_server <- function(id) {
       sel_keys_rv()
     })
     
-    # Helper: put id first, ISF-annotation second, then dppm/drt.
     .reorder_isf_cols <- function(df) {
       lead <- intersect(
         c("id", "ISF_annotation", "ISF_dDa", "ISF_drt", "ISF_ratio",
@@ -677,15 +635,8 @@ isf_server <- function(id) {
       df[, c(lead, setdiff(names(df), lead)), drop = FALSE]
     }
 
-    # Track the currently displayed table_selected view so we can map
-    # DT row-selection events back to feature keys.
     table_selected_view <- reactiveVal(NULL)
 
-    # Snapshot of the plot-driven selection state. Only updates when the
-    # selection came from the plot (or a reset) - NEVER when the user
-    # clicked rows in the table itself. renderDT depends on this
-    # snapshot instead of sel_keys_rv() directly, so clicking table rows
-    # will NOT cause the table to re-render/repaginate.
     plot_sel_snapshot <- reactiveVal(list(keys = character(0), src = "init"))
     observeEvent(sel_keys_rv(), {
       if (!identical(sel_source(), "table")) {
@@ -701,8 +652,6 @@ isf_server <- function(id) {
       df_all <- .reorder_isf_cols(as.data.frame(vals$df_filtered))
       key_col <- if (".key" %in% names(df_all)) ".key" else "id"
 
-      # Plot-driven selection: FILTER table to selected rows only.
-      # Otherwise (initial state or reset): show ALL rows.
       if (length(keys) && identical(src, "plot")) {
         df <- df_all[as.character(df_all[[key_col]]) %in% keys, , drop = FALSE]
         pre_sel <- seq_len(nrow(df))
@@ -726,10 +675,6 @@ isf_server <- function(id) {
                                    lengthMenu  = c(10, 25, 50, 100, 250)))
     })
 
-    # Table -> plot: user picking rows in table_selected pushes the
-    # selection back into sel_keys_rv. A setequal() guard prevents the
-    # observer from re-firing when the table pre-selects rows to mirror
-    # a plot pick.
     observeEvent(input$table_selected_rows_selected, {
       view <- table_selected_view()
       if (is.null(view) || !nrow(view)) return()
@@ -744,8 +689,6 @@ isf_server <- function(id) {
       }
     }, ignoreNULL = FALSE, ignoreInit = TRUE)
     
-    # Track the currently displayed ISF_table view so cell edits can be
-    # mapped back to the master annotated data frame by row key.
     isf_table_view <- reactiveVal(NULL)
 
     output$ISF_table <- DT::renderDT({
@@ -786,11 +729,10 @@ isf_server <- function(id) {
                           editable = list(target = "cell",
                                           disable = list(columns = disable_idx)))
         dt
-      })  # close withProgress
+      }) 
     })
 
-    # Persist manual re-tagging of ISF_annotation / ISF_NL_annotation back to
-    # the master data.
+    # Manual re-tagging of ISF_annotation / ISF_NL_annotation
     observeEvent(input$ISF_table_cell_edit, {
       info <- input$ISF_table_cell_edit
       view <- isf_table_view()
@@ -798,15 +740,10 @@ isf_server <- function(id) {
       col_name <- names(view)[info$col + 1L]
       if (!col_name %in% c("ISF_annotation", "ISF_NL_annotation")) return()
 
-      # info$row is 1-based within the currently displayed (filtered) view.
-      # The view carries `.key` (added to df_filtered at Plot time), but the
-      # master annotated table and orig_df only carry `id`. Look up both keys
-      # from the view so we can locate the row in each frame.
       row_id  <- if ("id"   %in% names(view)) view[["id"]][info$row]   else NA
       row_key <- if (".key" %in% names(view)) view[[".key"]][info$row] else NA
       new_val <- as.character(info$value)
 
-      # Update master annotated data (matched by id).
       if (!is.na(row_id) && "id" %in% names(vals$df_annotated)) {
         m_idx <- which(vals$df_annotated[["id"]] == row_id)
         if (length(m_idx)) {
@@ -816,7 +753,6 @@ isf_server <- function(id) {
         }
       }
 
-      # Also update the filtered/display data (drives plots + selected table).
       if (!is.null(vals$df_filtered)) {
         f_key_col <- if (".key" %in% names(vals$df_filtered)) ".key" else "id"
         f_lookup  <- if (f_key_col == ".key") row_key else row_id
@@ -831,14 +767,13 @@ isf_server <- function(id) {
       }
     })
     
-    # --- Clean Export Logic ---
+    # --- Export Logic ---
     output$export_all <- downloadHandler(
       filename = function() { paste("mzXplorer_ISF_ProcessedTable_", Sys.Date(), ".csv", sep="") },
       content = function(file) {
         req(vals$df_annotated, vals$orig_df)
         res_df <- vals$df_annotated
 
-        # Merge annotation back to original data to preserve all columns
         out <- vals$orig_df
         for (cn in c("ISF_annotation", "ISF_dDa", "ISF_drt", "ISF_ratio",
                      "ISF_NL_annotation", "ISF_NL_type", "ISF_NL_dDa",
@@ -847,10 +782,6 @@ isf_server <- function(id) {
           if (!is.null(res_df[[cn]])) out[[cn]] <- res_df[[cn]]
         }
 
-        # Apply the same Processed-table filter as the on-screen view so the
-        # export mirrors what the user sees. Manual re-tagging in the table has
-        # already been merged into `out` above (via vals$df_annotated), so the
-        # filter runs against the updated annotations.
         tf <- isolate(input$table_filter)
         if (!is.null(tf)) {
           is_frag_row <- if ("ISF_annotation"    %in% names(out)) out$ISF_annotation    != "not ISF" else rep(FALSE, nrow(out))
@@ -881,11 +812,6 @@ isf_server <- function(id) {
       }
     )
     
-    # Network Plot (linked via crosstalk to the two scatter plots)
-    # Full re-render on selection change: selected features are drawn
-    # ONLY on the yellow "Selected" trace, unselected features stay on
-    # their category trace at a dimmed opacity while a selection exists,
-    # and full opacity otherwise. No proxy needed — no compounding.
     output$isf_network_plot <- plotly::renderPlotly({
       sel_gen_isf()  # re-render on selection reset
       req(vals$df_filtered); df <- vals$df_filtered
@@ -902,10 +828,6 @@ isf_server <- function(id) {
         if (is.null(df$ISF_NL_annotation)) df$ISF_NL_annotation <- "not ISF"
         if (is.null(df$Adduct_annotation)) df$Adduct_annotation <- "no adduct"
 
-        # Category priority: Both (frag+NL) > Fragment-ISF > NL-ISF > everything else.
-        # Adducts no longer have their own network category - they are folded
-        # into the "Precursor / clean" pool so referenced-as-precursor adduct
-        # features still appear on the plot.
         has_frag  <- df$ISF_annotation    != "not ISF"
         has_nl    <- df$ISF_NL_annotation != "not ISF"
         is_both   <- has_frag & has_nl
@@ -921,9 +843,6 @@ isf_server <- function(id) {
         if (nrow(is_isf) + nrow(nl_isf) + nrow(both_df) == 0)
           return(NULL)
 
-        # If the user only wants matched pairs, restrict `not_isf` (precursors)
-        # to those referenced by any ISF (fragment or NL) feature's annotation.
-        # Compare as CHARACTER so we work with numeric or string ids alike.
         if (isTRUE(input$net_only_matches)) {
           annot_ids_all <- c(
             sub("^ISF of ID\\s*", "", is_isf$ISF_annotation),
@@ -947,8 +866,6 @@ isf_server <- function(id) {
           format(nrow(nl_isf),  big.mark = " "),
           format(nrow(both_df), big.mark = " ")))
 
-        # Helper to build (lx, ly) edge coords for a source frame
-        # against precursor ids in `annot_col`.
         .build_edges <- function(src, annot_col) {
           if (!nrow(src)) return(list(lx = numeric(0), ly = numeric(0)))
           annot_ids <- sub("^ISF of ID\\s*", "", src[[annot_col]])
@@ -982,7 +899,6 @@ isf_server <- function(id) {
 
         incProgress(0.3, detail = "Drawing traces...")
 
-        # Partition each category by the current selection.
         not_sel  <- not_isf$.key %in% sel_keys
         isf_sel  <- is_isf$.key  %in% sel_keys
         nl_sel   <- nl_isf$.key  %in% sel_keys
@@ -1058,17 +974,11 @@ isf_server <- function(id) {
                                   if (!is.null(edge_note)) edge_note else "")) %>%
         plotly::layout(dragmode = "select")
       p
-      })  # close withProgress
+      }) 
     })
 
-    # (ISF network selection visuals are handled by full re-render above.)
-
     # --- ISF intensity ratio vs. RT plot ---
-    # One point per (fragment, precursor) pair. Fragment ISF and NL ISF are
-    # color-coded to match the network plot; features tagged as BOTH
-    # fragment + NL contribute one point per source (fragment source in
-    # the "Both (fragment)" bucket, NL source in "Both (NL)").
-    # Adducts are excluded (they are not fragmentation pairs).
+    # One point per (fragment, precursor) pair. 
     output$isf_ratio_plot <- plotly::renderPlotly({
       req(vals$df_filtered); df <- vals$df_filtered
       df <- .apply_col_filter(df, input$filter_col)
@@ -1078,9 +988,6 @@ isf_server <- function(id) {
       if (is.null(df$ISF_NL_ratio))      df$ISF_NL_ratio      <- NA_character_
       if (is.null(df$Adduct_annotation)) df$Adduct_annotation <- "no adduct"
 
-      # Explode a (annotation, ratio) pair into long rows. Each output
-      # row carries `.key` = the fragment feature's key so the ratio-plot
-      # box-select can push directly into `sel_keys_rv`.
       .explode <- function(rows, annot_col, ratio_col, kind) {
         if (!length(rows)) return(NULL)
         ids_raw <- sub("^ISF of ID\\s*", "", df[[annot_col]][rows])
@@ -1102,7 +1009,6 @@ isf_server <- function(id) {
         }), use.names = TRUE, fill = TRUE)
       }
 
-      # Category masks — exclude adducts entirely from the ratio plot.
       not_ad    <- df$Adduct_annotation == "no adduct"
       has_frag  <- df$ISF_annotation    != "not ISF"
       has_nl    <- df$ISF_NL_annotation != "not ISF"
@@ -1141,9 +1047,6 @@ isf_server <- function(id) {
         "Both (fragment)" = "Fragment + Neutral loss",
         "Both (NL)"       = "Fragment + Neutral loss"
       )
-      # Only show one legend entry for the "Both" category (from the
-      # first Both trace we draw); collapse into a legendgroup so
-      # toggling hides both point sets together.
       shown_both <- FALSE
 
       sel_keys <- sel_keys_rv()
@@ -1159,7 +1062,7 @@ isf_server <- function(id) {
         p <- p %>% add_trace(
           data = as.data.frame(sub),
           x = ~frag_rt, y = ~ratio,
-          key = ~.key,                 # emit .key in event_data
+          key = ~.key,                
           type = "scattergl", mode = "markers",
           name = legend_name[[k]],
           legendgroup = legend_name[[k]],
@@ -1242,10 +1145,6 @@ isf_server <- function(id) {
     }, ignoreNULL = FALSE)
 
     output$sample_x_var_ui <- renderUI({
-      # Prefer the plotted / annotated data if available (has mapped
-      # columns like mz/rt/id), but fall back to feat_raw() so the
-      # selector is populated as soon as a file is uploaded — the user
-      # doesn't have to run Process/Plot first.
       src <- if (!is.null(vals$df_filtered)) vals$df_filtered
              else if (!is.null(vals$df_annotated)) vals$df_annotated
              else feat_raw()
@@ -1286,15 +1185,8 @@ make_isf_scatter <- function(sd, xv, yv, sid,
                              intensity_col = NULL,
                              show_legend = TRUE,
                              sel_keys = NULL) {
-  # Build truncated tick labels for any categorical (character/factor) axis
-  # so that long values like "ISF of ID 130, 1450, 2201, ..." don't blow out
-  # the plot area. Full text remains visible in the hover.
   df <- tryCatch(sd$data(withSelection = FALSE), error = function(e) NULL)
 
-  # ---- Intensity-as-size (robust) --------------------------------------
-  # Same rules as MD: guard non-numeric / all-NA / zero-range and fall
-  # back to a constant size. sizemode="diameter" + sizemin so tiny
-  # points remain visible in scattergl.
   size_const  <- 7
   point_sizes <- if (!is.null(df)) rep(size_const, nrow(df)) else size_const
   use_size    <- FALSE
@@ -1318,9 +1210,6 @@ make_isf_scatter <- function(sd, xv, yv, sid,
     v <- df[[colname]]
     if (!(is.character(v) || is.factor(v))) return(NULL)
     uv <- unique(as.character(v))
-    # Sub-sample tick labels when there are too many categories, so the
-    # axis stays readable at full zoom. Plotly still lays out ALL
-    # categories along the axis; we just decide which ones get a label.
     if (length(uv) > max_ticks) {
       pick_idx <- unique(round(seq(1, length(uv), length.out = max_ticks)))
       tv <- uv[pick_idx]
@@ -1339,7 +1228,6 @@ make_isf_scatter <- function(sd, xv, yv, sid,
   xaxis_ov <- .cat_axis(xv)
   yaxis_ov <- .cat_axis(yv)
 
-  # Numeric axes format with .4f; categorical axes keep raw string via %{x}/%{y}.
   is_num <- function(cn) !is.null(df) && cn %in% names(df) && is.numeric(df[[cn]])
   xfmt <- if (is_num(xv)) "%{x:.4f}" else "%{x}"
   yfmt <- if (is_num(yv)) "%{y:.4f}" else "%{y}"
@@ -1352,9 +1240,6 @@ make_isf_scatter <- function(sd, xv, yv, sid,
     marker_spec$sizemin  <- 3
   }
 
-  # Split into unselected ("All features") and selected ("Selected"),
-  # mirroring the MD scatter. When a selection exists, the base trace
-  # dims so the yellow Selected overlay stands out.
   if (!is.null(df) && !is.null(sel_keys) && length(sel_keys) &&
       ".key" %in% names(df)) {
     is_sel <- as.character(df$.key) %in% as.character(sel_keys)
@@ -1382,10 +1267,6 @@ make_isf_scatter <- function(sd, xv, yv, sid,
 
   p <- plotly::plot_ly(source = sid)
   if (is.null(df_unsel) || nrow(df_unsel)) {
-    # Keep crosstalk wiring on the "All features" trace. When there is
-    # no selection this is the full data (sd); when there is, split the
-    # SharedData so the highlight from other plots still targets the
-    # correct rows.
     sd_unsel <- if (has_selection)
       crosstalk::SharedData$new(df_unsel, key = ~.key, group = sd$groupName())
     else sd

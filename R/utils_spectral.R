@@ -1,14 +1,8 @@
 #' Fast MGF/MSP fragment-file parsers.
 #'
-#' The previous implementations walked every input line through a chain
-#' of `grepl` tests inside an R `for` loop and rebuilt peak matrices with
-#' `do.call(rbind, lapply(...))`. That is O(n * n_patterns) and
-#' allocates one list element per peak. For large MS2 exports (tens of
-#' thousands of spectra) this is the dominant load-time cost.
 #'
 #' The parsers below:
-#'   * read the whole file once with `data.table::fread(sep="\n")` which
-#'     is much faster than base `readLines` on large files;
+#'   * read the whole file once with `data.table::fread(sep="\n")`
 #'   * split the line vector into spectrum blocks using vectorised
 #'     `which()` on the BEGIN/END markers;
 #'   * pull metadata via a single `regexpr("=", block, fixed=TRUE)` call
@@ -18,9 +12,7 @@
 # ---- helpers ---------------------------------------------------------------
 
 .read_lines_fast <- function(path) {
-  # fread with sep = "\n" returns a data.table with one column of lines;
-  # it uses memory-mapping and is 3-5x faster than readLines() for big
-  # text files. Falls back to readLines on any error.
+  # fread with sep = "\n" returns a data.table with one column of lines
   out <- tryCatch(
     data.table::fread(path, sep = "\n", header = FALSE, quote = "",
                       strip.white = FALSE, blank.lines.skip = FALSE,
@@ -34,8 +26,7 @@
 
 .parse_peaks_block <- function(peak_lines) {
   if (!length(peak_lines)) return(list(mz = numeric(), int = numeric()))
-  # Vectorised: split every "mz  int" line at once. Handles space, tab
-  # and multiple whitespace. Only the first two tokens are used.
+  # Vectorised: split every "mz  int" line at once.
   parts <- strsplit(peak_lines, "[ \t,;]+", perl = TRUE)
   mz  <- suppressWarnings(as.numeric(vapply(parts, `[`, character(1), 1L)))
   int <- suppressWarnings(as.numeric(vapply(parts, `[`, character(1), 2L)))
@@ -43,18 +34,12 @@
   list(mz = mz[keep], int = int[keep])
 }
 
-# Vectorised peak parser for MANY blocks in a single call. Given the
-# full lines vector and a peak-line index vector plus each peak-line's
-# spectrum id (integer group), returns a list of `list(mz, int)`, one
-# per spectrum id in `1:n_spectra`. This is orders of magnitude faster
-# than calling `.parse_peaks_block()` once per spectrum.
+# returns a list of `list(mz, int)`, one per spectrum id in `1:n_spectra`
 .parse_all_peaks <- function(all_lines, peak_idx, spec_of_line, n_spectra) {
   out <- rep(list(list(mz = numeric(), int = numeric())), n_spectra)
   if (!length(peak_idx)) return(out)
   pl <- all_lines[peak_idx]
-  # data.table::tstrsplit is a single C-level call that returns already
-  # split columns — much faster than base strsplit + vapply for millions
-  # of peak lines.
+  
   tk <- data.table::tstrsplit(pl, "[ \t,;]+", perl = TRUE, fixed = FALSE,
                               keep = 1:2, fill = NA_character_)
   mz  <- suppressWarnings(as.numeric(tk[[1]]))
@@ -63,10 +48,8 @@
   if (!any(keep)) return(out)
   mz  <- mz[keep]; int <- int[keep]
   grp <- spec_of_line[keep]
-  # data.table split by integer key is very fast.
   ord <- order(grp)
   grp <- grp[ord]; mz <- mz[ord]; int <- int[ord]
-  # Find run-length boundaries in the sorted group vector.
   runs <- rle(grp)
   ends <- cumsum(runs$lengths)
   starts <- c(1L, head(ends, -1L) + 1L)
@@ -78,9 +61,6 @@
   out
 }
 
-# Given begin/end line-index vectors of contiguous spectrum blocks,
-# return an integer vector of length n_lines telling which spectrum
-# each line belongs to (NA outside any block). Fully vectorised.
 .build_spec_of_line <- function(begin_idx, end_idx, n_lines) {
   spec_of_line <- rep.int(NA_integer_, n_lines)
   valid <- end_idx >= begin_idx
@@ -89,7 +69,7 @@
   hi   <- end_idx[valid]
   ids  <- which(valid)
   reps <- hi - lo + 1L
-  # Expand [lo, hi] pairs into a single index vector without a loop.
+  # Expand [lo, hi] pairs into a single index vector
   # sequence(reps, from = lo) returns lo[1], lo[1]+1, ..., lo[1]+reps[1]-1,
   # lo[2], lo[2]+1, ...
   line_idx <- sequence(reps, from = lo)
@@ -104,7 +84,6 @@
 #' @param lines character vector
 #' @return list of spectra
 parse_mgf <- function(lines) {
-  # trimws is vectorised — call it once, not per line.
   lines <- trimws(lines)
   if (!length(lines)) return(list())
 
@@ -124,8 +103,7 @@ parse_mgf <- function(lines) {
   # ---- Vectorised peak parsing for the WHOLE file --------------------
   # Build the per-line "which spectrum am I in" vector once (fully
   # vectorised), then let `.parse_all_peaks` split all peak lines in a
-  # single pass. This replaces the O(n_spectra) fread(text=) calls the
-  # old code did.
+  # single pass.
   spec_of_line <- .build_spec_of_line(begin_idx + 1L, end_idx - 1L,
                                       length(lines))
   peak_mask  <- starts_digit & !is.na(spec_of_line)
@@ -133,7 +111,7 @@ parse_mgf <- function(lines) {
   peaks_all  <- .parse_all_peaks(lines, peak_idx,
                                  spec_of_line[peak_idx], m)
 
-  # ---- Metadata (still per-spectrum but very cheap: just substr) ----
+  # ---- Metadata ----
   lapply(seq_len(m), function(i) {
     lo <- begin_idx[i] + 1L
     hi <- end_idx[i]   - 1L
@@ -192,7 +170,7 @@ parse_msp <- function(lines) {
   peaks_all <- .parse_all_peaks(lines, peak_idx,
                                 spec_of_line[peak_idx], n_spec)
 
-  # Key patterns — single combined regex per key
+  # Key patterns 
   meta_keys <- list(
     feature_id   = "^(FEATURE_ID)[:=]\\s*",
     precursor_mz = "^(PRECURSORMZ|PRECURSOR M/Z|PRECURSOR MZ|PEPMASS|PrecursorMZ)[:=]\\s*",
@@ -234,8 +212,7 @@ read_fragment_file <- function(path) {
   if (ext == "mgf") return(parse_mgf(lines))
   if (ext == "msp") return(parse_msp(lines))
 
-  # Unknown extension: sniff for MGF markers, else assume MSP.
-  # Only check the first few thousand lines — enough to decide.
+  # Unknown extension: look for MGF markers, else assume MSP.
   probe <- utils::head(lines, 2000L)
   if (any(grepl("BEGIN IONS", probe, ignore.case = TRUE))) return(parse_mgf(lines))
   parse_msp(lines)

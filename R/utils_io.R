@@ -8,8 +8,6 @@
 #' Latin-1 exports load cleanly. For Excel files the first non-empty
 #' sheet is used.
 #'
-#' Does NOT rename or validate columns — the column-mapping UI handles
-#' that.
 #'
 #' @param path path to CSV/TSV/TXT/XLSX/XLS
 #' @return data.table with the file's original column names
@@ -23,20 +21,12 @@ read_feature_file <- function(path, orig_name = NULL) {
 
   # ---- Excel branch -------------------------------------------------------
   if (ext %in% c("xlsx", "xls")) {
-    # readxl needs a proper file extension because Shiny's temp datapath
-    # has none. Stage a copy with the correct suffix if required.
     xl_path <- path
     if (tolower(tools::file_ext(path)) != ext) {
       xl_path <- tempfile(fileext = paste0(".", ext))
       file.copy(path, xl_path, overwrite = TRUE)
     }
 
-    # ---- Fast path: openxlsx2 (xlsx only) -------------------------------
-    # openxlsx2 reads the raw sharedStrings + sheet XML with a compiled C++
-    # backend and *no* per-column type guessing pass, which for wide numeric
-    # feature tables is typically 3-10x faster than readxl::read_excel.
-    # We fall back to readxl automatically for .xls (openxlsx2 is xlsx-only)
-    # or if openxlsx2 is not installed.
     df <- NULL
     if (ext == "xlsx" && requireNamespace("openxlsx2", quietly = TRUE)) {
       sheet_names <- tryCatch(openxlsx2::wb_load(xl_path)$sheet_names,
@@ -73,9 +63,6 @@ read_feature_file <- function(path, orig_name = NULL) {
       last_err <- NULL
       for (sh in sheets) {
         cand <- tryCatch(
-          # guess_max = 1000 (readxl default) is much faster than 10000
-          # and rarely misses type inference on well-formed feature tables.
-          # The app coerces mapped numeric columns explicitly downstream.
           readxl::read_excel(xl_path, sheet = sh, guess_max = 1000,
                              .name_repair = "minimal", progress = FALSE),
           error = function(e) { last_err <<- e; NULL }
@@ -102,12 +89,6 @@ read_feature_file <- function(path, orig_name = NULL) {
   }
 
   # ---- Delimited text branch ---------------------------------------------
-  # Fast path: try data.table::fread directly on the file. fread is
-  # memory-mapped and multithreaded, so on well-formed UTF-8 CSVs it is
-  # dramatically faster than reading the whole file into a character
-  # string first. Only fall back to the byte-level decoder if fread errs
-  # or the result contains invalid UTF-8 (typical for Windows-1252
-  # Excel exports).
   .sanitize_names <- function(df) {
     nm <- names(df)
     nm <- gsub("^\ufeff", "", nm)
@@ -126,12 +107,9 @@ read_feature_file <- function(path, orig_name = NULL) {
     warning = function(w) NULL
   )
   if (!is.null(fast_df) && ncol(fast_df) > 0 && nrow(fast_df) > 0) {
-    # Verify column names are valid UTF-8. If not, fall through to the
-    # bytes decoder.
     ok_names <- all(vapply(names(fast_df),
                            function(x) validUTF8(x), logical(1)))
     ok_char  <- TRUE
-    # Sample up to 5 character columns for encoding validity
     char_cols <- names(fast_df)[vapply(fast_df, is.character, logical(1))]
     if (length(char_cols)) {
       probe <- utils::head(char_cols, 5L)
@@ -142,9 +120,6 @@ read_feature_file <- function(path, orig_name = NULL) {
     if (ok_names && ok_char) return(.sanitize_names(fast_df))
   }
 
-  # Slow / robust path: read raw bytes and try several encodings. This
-  # handles Excel-exported CSVs on Windows (Windows-1252 / Latin-1) that
-  # would otherwise throw "input string N is invalid".
   fsize <- file.info(path)$size
   raw <- tryCatch(readBin(path, what = "raw", n = fsize),
                   error = function(e) NULL)
@@ -152,16 +127,13 @@ read_feature_file <- function(path, orig_name = NULL) {
     stop(sprintf("Could not read file '%s' (empty or unreadable).",
                  basename(path)), call. = FALSE)
   }
-  # Strip UTF-8 BOM if present
   if (length(raw) >= 3 &&
       raw[1] == as.raw(0xEF) && raw[2] == as.raw(0xBB) && raw[3] == as.raw(0xBF)) {
     raw <- raw[-(1:3)]
   }
 
-  # Convert bytes -> UTF-8. Try encodings in order; accept the first one
-  # that produces a fully valid UTF-8 string (validUTF8() returns TRUE).
   txt <- NULL
-  bytes_string <- rawToChar(raw)   # marked as native by R; we ignore its encoding
+  bytes_string <- rawToChar(raw)  
   Encoding(bytes_string) <- "bytes"
   for (enc in c("UTF-8", "Windows-1252", "Latin-1", "ISO-8859-1")) {
     cand <- tryCatch(iconv(bytes_string, from = enc, to = "UTF-8",
@@ -172,13 +144,11 @@ read_feature_file <- function(path, orig_name = NULL) {
       txt <- cand; break
     }
   }
-  # Last-resort fallback: force Latin-1 with byte substitution — never fails
   if (is.null(txt)) {
     txt <- iconv(bytes_string, from = "Latin-1", to = "UTF-8", sub = "?")
     Encoding(txt) <- "UTF-8"
   }
 
-  # Detect delimiter from the first non-empty line
   first_line <- strsplit(txt, "\r?\n", perl = TRUE)[[1]]
   first_line <- first_line[nzchar(first_line)][1]
   if (is.na(first_line)) first_line <- ""
@@ -189,7 +159,6 @@ read_feature_file <- function(path, orig_name = NULL) {
   sep <- seps[which.max(counts)]
   if (max(counts) == 0) sep <- ","
 
-  # Parse the (now UTF-8) text with fread
   df <- tryCatch(
     data.table::fread(text = txt, sep = sep, header = TRUE,
                       showProgress = FALSE, data.table = TRUE,
@@ -280,7 +249,6 @@ apply_column_mapping <- function(df, mapping) {
 # ---------------------------------------------------------------------------
 # Legacy loader (kept for backwards compatibility)
 # ---------------------------------------------------------------------------
-
 #' Legacy CSV loader with automatic column guessing.
 #' New code should use `read_feature_file()` + the mapping UI instead.
 #' @export
@@ -297,10 +265,9 @@ load_feature_csv <- function(path) {
 }
 
 # ---------------------------------------------------------------------------
-# Shared plotly theme (scientific style)
+# Shared plotly theme
 # ---------------------------------------------------------------------------
 
-# Okabe-Ito color-blind-safe palette
 mzx_palette <- c(
   "#0072B2", "#E69F00", "#009E73", "#CC79A7",
   "#56B4E9", "#D55E00", "#F0E442", "#000000"
@@ -384,19 +351,10 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
   capped <- FALSE
   if (nrow(df) > 40) { df <- df[seq_len(40), , drop = FALSE]; capped <- TRUE }
 
-  # ------------------------------------------------------------------
-  # Build the x-axis label from `x_var`. Numeric columns get formatted
-  # (m/z -> 4 dp, RT -> 2 dp, others -> 3 dp). Fallback chain:
-  #   requested column -> id -> 1..N
-  # ------------------------------------------------------------------
   x_col <- if (!is.null(x_var) && length(x_var) == 1 && x_var %in% names(df)) x_var
            else if ("id" %in% names(df)) "id"
            else NA_character_
 
-  # Sort features ascending by the chosen x-axis value when it is numeric
-  # (e.g. m/z, RT, id). This makes the sample-comparison bars/lines read
-  # left-to-right in a natural order regardless of the row order of the
-  # incoming selection. Non-numeric x columns fall back to as-is order.
   if (!is.na(x_col)) {
     xv <- suppressWarnings(as.numeric(df[[x_col]]))
     if (any(!is.na(xv))) {
@@ -423,13 +381,7 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
     }
   }
 
-  # ------------------------------------------------------------------
-  # Enrich the x-axis tick labels with `id` and `m/z` when available,
-  # so that every plotted / selected feature is unambiguously
-  # identifiable without hovering. The chosen x_var stays first (so
-  # the axis is still sorted / titled by it), followed by whichever of
-  # id / mz isn't already the primary key.
-  # ------------------------------------------------------------------
+  
   has_id <- "id" %in% names(df)
   has_mz <- "mz" %in% names(df)
   extras <- character(nrow(df))
@@ -449,7 +401,6 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
   }
   if (length(parts)) {
     joined <- do.call(paste, c(parts, sep = " | "))
-    # Drop empty extras cleanly
     joined <- sub("^\\s*\\|\\s*", "", joined)
     joined <- sub("\\s*\\|\\s*$", "", joined)
     nonempty <- nzchar(joined)
@@ -457,8 +408,7 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
                                    joined[nonempty], ")")
   }
 
-  # Guarantee unique x-axis categories so plotly doesn't collapse bars
-  # with identical numeric labels.
+
   if (anyDuplicated(feat_label)) {
     feat_label <- make.unique(feat_label, sep = " #")
   }
@@ -466,26 +416,19 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
   samples <- as.character(sample_map)
   labels  <- if (!is.null(names(sample_map))) names(sample_map) else samples
 
-  # Do NOT drop samples whose column is missing from `df`. Keep them
-  # with a full-NA column so the user still sees the slot in the legend
-  # and can tell which selection is missing data. Track missing ones
-  # to surface a warning on the plot.
+  # Do NOT drop samples whose column is missing from `df`.
   missing_cols <- samples[!samples %in% names(df)]
   if (!length(samples)) {
     return(plotly::plot_ly() %>%
              plotly::layout(title = "No matching sample columns"))
   }
 
-  # Truncate long legend/trace labels so they don't overflow the plotting
-  # area. The full name is kept in `full_labels` for the hover tooltip.
   full_labels <- labels
   short_labels <- ifelse(nchar(labels) > 22,
                          paste0(substr(labels, 1, 20), "\u2026"),
                          labels)
 
-  # Long-format matrix (features x samples). Missing sample columns are
-  # filled with NA so the trace still exists (empty bars/points) and the
-  # sample appears in the legend.
+
   mat <- as.data.frame(lapply(samples, function(cn) {
     if (cn %in% names(df)) suppressWarnings(as.numeric(df[[cn]]))
     else rep(NA_real_, nrow(df))
@@ -511,10 +454,7 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
       if (!any(keep)) next
       xi   <- feat_label[keep]
       yi   <- yvec[keep]
-      # Bake the full hover string into `text` and use hoverinfo="text".
-      # Some plotly.js builds don't interpolate `%{text}` inside a
-      # hovertemplate for line/marker traces, so we sidestep the
-      # placeholder entirely.
+
       hi <- paste0("<b>", htmltools::htmlEscape(full_labels[i]), "</b><br>",
                    point_txt[keep], "<br>",
                    "Intensity: ", format(yi, big.mark = ",", scientific = FALSE))
@@ -533,13 +473,7 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
     }
     xaxis_layout <- list(type = "category")
   } else {
-    # Grouped bars with MANUAL x-positioning. Using barmode="group" on a
-    # categorical x leaves a reserved empty slot for every trace that has
-    # no data at a given x — that's the source of the "phantom bar" gap
-    # (e.g. sample 2 missing at point 1 shows as space between sample 1
-    # and sample 3). Here we place each bar at an explicit numeric x so
-    # only samples with data at a feature take up space, and inter-
-    # feature spacing is controlled by group_gap.
+
     bar_w     <- 0.9
     group_gap <- 0.6
     n_feat    <- nrow(df)
@@ -551,8 +485,6 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
       which(!is.na(sample_mat[fi, ]))
     })
 
-    # Cumulative x-positions of every (feature, sample) bar + centers
-    # of each feature group (used for the tick labels).
     x_positions   <- vector("list", n_feat)
     group_centers <- numeric(n_feat)
     cur <- 0
@@ -600,7 +532,6 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
 
     fig <- plotly::layout(fig, barmode = "overlay")
 
-    # Numeric x-axis with custom tick labels at each feature-group center.
     xaxis_layout <- list(
       type      = "linear",
       tickmode  = "array",
@@ -622,16 +553,9 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
                     # Top-half of the plot: samples legend
                     y = 1, yanchor = "top",
                     x = 1.02, xanchor = "left"),
-      # Wide right margin to fit the sample legend AND the "Features
-      # shown" info panel that sits underneath it. Without this the
-      # panel gets clipped at the figure's right edge.
       margin = list(r = 340)
     )
 
-  # --- "Features shown" panel (a second legend-like info block below
-  # the samples legend). One line per plotted feature listing id, m/z,
-  # RT (whichever are available). Hover on the actual bars/markers
-  # still shows the same info per point.
   has_rt <- "rt" %in% names(df)
   feat_lines <- vapply(seq_len(nrow(df)), function(k) {
     parts <- character(0)
@@ -642,8 +566,7 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
                                           suppressWarnings(as.numeric(df$rt[k]))))
     paste(parts, collapse = "  \u00B7  ")
   }, character(1))
-  # Very long feature lists get scrollbar-less; cap displayed lines and
-  # note the overflow in the last row.
+
   max_lines <- 30L
   if (length(feat_lines) > max_lines) {
     overflow  <- length(feat_lines) - max_lines
@@ -664,9 +587,6 @@ make_sample_comp_plot <- function(df, sample_map, plot_type = "Grouped bars",
 
   ann_list <- list(feat_panel)
 
-  # Warn on the plot if any selected sample columns aren't present in
-  # the current data (usually because the feature-table view has been
-  # filtered/reshaped and dropped those columns).
   if (length(missing_cols)) {
     ann_list <- c(ann_list, list(list(
       xref = "paper", yref = "paper", x = 0, y = 1.06,

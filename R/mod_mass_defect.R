@@ -13,11 +13,7 @@ mass_defect_ui <- function(id) {
                              'application/vnd.ms-excel')),
         uiOutput(ns("file1_status")),
 
-        # --- Shown on "Plot & Table" — static subtab (Mass Defect + Column Mapping) ---
-        # Kept as plain static UI (no renderUI) so the Process/Plot input IDs are
-        # bound immediately on page load. This eliminates the click-does-nothing
-        # race that can happen when observers are attached to dynamically
-        # rendered actionButtons.
+        # --- Shown on "Mass Defect" — 
         conditionalPanel(
           condition = sprintf("input['%s'] == 'Plot_Table'", ns("result_sections")),
           tabsetPanel(type = "pills", id = ns("plot_tab_subtabs"),
@@ -81,7 +77,7 @@ mass_defect_ui <- function(id) {
                                      width = "100%"))
             ),
             tags$small(style = "color:#777;",
-                       "Cancel halts before the next processing phase; the graph search itself cannot be interrupted mid-run.")
+                       "Cancel halts before the next processing phase.")
           )
         ),
 
@@ -91,10 +87,10 @@ mass_defect_ui <- function(id) {
           div(class = "mzx-section mzx-molcomp",
             tags$h4("Molecular composition"),
             tags$small(style = "color:#555;",
-                       "Calculate DBE, and H/C and O/C ratios, if chemical formulas are present in feature file.. Plots DBE and Van Kreveln."),
+                       "Calculate DBE, and H/C and O/C ratios, if chemical formulas are present in feature file, for DBE and Van Kreveln plots."),
             tags$br(), tags$br(),
             selectInput(ns("mc_ratio"), "Van Krevelen y-axis ratio",
-                        choices  = c("H/C", "F/C", "Br/C", "Cl/H"),
+                        choices  = c("H/C", "F/C", "Br/C", "Cl/C"),
                         selected = "H/C"),
             actionButton(ns("plot_dbe_vk"),
                          "Calculate DBE and Van Krevelen",
@@ -246,9 +242,7 @@ mass_defect_server <- function(id) {
 
     # --- Filter helper ---
     # Restrict a data.frame to rows where the chosen column has data:
-    # not NA, and (for numeric columns) strictly greater than zero. This
-    # is the semantics for "feature was detected in this sample". If
-    # `col` is empty / "(none)" / not present, the df is returned as-is.
+    # not NA, and (for numeric columns) strictly greater than zero. 
     .apply_col_filter <- function(df, col) {
       if (is.null(df) || !nrow(df)) return(df)
       if (is.null(col) || !length(col) || col %in% c("", "(none)") ||
@@ -259,10 +253,7 @@ mass_defect_server <- function(id) {
       df[keep, , drop = FALSE]
     }
     
-    # --- Shared Data Helpers ---
-    # Split raw file IO from formula-dependent MDH computation so that typing
-    # in cus1/cus2/rounding does not re-read the CSV.
-    #
+
     # `raw_input` reads the CSV once. Column mapping (user-selectable) is then
     # applied in `raw_file()` so users can point their columns at the internal
     # targets (mz, rt, intensity, id, ccs).
@@ -272,7 +263,7 @@ mass_defect_server <- function(id) {
         df <- read_feature_file(input$file1$datapath,
                                 orig_name = input$file1$name)
         validate(need(!is.null(df) && ncol(df) > 0,
-                      "Could not read the file. Please provide a CSV or TSV text file."))
+                      "Could not read the file. Please provide a CSV or XLSX text file."))
         df
       })
     })
@@ -326,11 +317,8 @@ mass_defect_server <- function(id) {
       )
     })
 
-    # (plot_tab_subtabs_ui is now static UI in mass_defect_ui — no renderUI here.)
 
     # Show/hide the ISF navbar tab based on the checkbox.
-    # Only hides the nav <li> (Bootstrap manages tab-pane naturally).
-    # Switches to MD tab first if the ISF tab is currently active.
     observeEvent(input$show_isf_tab, {
       if (isTRUE(input$show_isf_tab)) {
         shinyjs::runjs("$('a[data-value=\"In-Source Fragmentation\"]').closest('li').show();")
@@ -347,9 +335,7 @@ mass_defect_server <- function(id) {
 
     # Resolve the current column mapping. If the user has explicitly set a
     # value in the Column Mapping pill, use it; otherwise fall back to the
-    # auto-guessed default based on column names. This lets Process work
-    # immediately after upload, without forcing the user to open the
-    # Column Mapping pill first.
+    # auto-guessed default based on column names. 
     resolved_mapping <- reactive({
       req(raw_input())
       nms <- names(raw_input())
@@ -395,15 +381,8 @@ mass_defect_server <- function(id) {
       if (!"id" %in% names(df)) df$id <- seq_len(nrow(df))
 
       df$RMD_ppm <- round((df$mz - round(df$mz)) / df$mz * 1e6)
-      # OMD is stored as an INTEGER mDa using "round half away from
-      # zero" (sign(x) * floor(abs(x) + 0.5)). This is the single
-      # source of truth for both:
       #   - the OMD column shown in every table (no client-side rounding)
       #   - the integer-mDa matching in the MD/m/z difference algorithm
-      # Using R's default round() (banker's / round half to even) here
-      # would silently disagree with the display for exact-half values
-      # such as -136.5 (banker's gives -136, display shows -137) and
-      # produce phantom pairs.
       raw_omd <- (df$mz - round(df$mz)) * 1e3
       df$OMD_mDa <- as.integer(sign(raw_omd) * floor(abs(raw_omd) + 0.5))
       df
@@ -513,14 +492,8 @@ mass_defect_server <- function(id) {
                                            key = ~.key, group = ns("md"))
           # Read (NOT isolate) the current lasso selection so the plot
           # redraws its overlay whenever the selection changes. This makes
-          # a new lasso in a different sample REPLACE the previous overlay
-          # rather than accumulate stale "Selected" markers under a
-          # mismatched "All features" client-side highlight.
+          # a new lasso in a different sample REPLACE the previous overlay.
           sel_snapshot <- sel_keys_rv()
-          # Sizing settings are captured at the moment of the Plot click
-          # (via isolate) so that toggling the "Show intensity as size"
-          # checkbox afterwards does NOT re-render the plots; the user has
-          # to press Plot again for the change to take effect.
           ins_flag <- isolate(input$ins)
           i_col    <- isolate(input$selectintensity)
           if (is.null(i_col) || !nzchar(i_col) || !(i_col %in% names(m_f))) {
@@ -552,9 +525,7 @@ mass_defect_server <- function(id) {
       })
     })
 
-    # --- Cancel flag for homologue search. R is single-threaded so the
-    # find_homologues() call itself cannot be interrupted; the flag is
-    # checked BEFORE we hand off to it.
+    # --- Cancel flag for homologue search. 
     cancel_homol <- reactiveVal(FALSE)
     observeEvent(input$cancel_homol, {
       cancel_homol(TRUE)
@@ -571,8 +542,6 @@ mass_defect_server <- function(id) {
 
       withProgress(message = "Homologue search", value = 0, {
         # Save the full data before find_homologues (which re-orders rows).
-        # Match on the stable 'id' column to map results back, exactly like
-        # the reference working implementation.
         m_full <- as.data.frame(vals$m)
         m_clean <- m_full
         m_clean$.key <- NULL
@@ -594,9 +563,7 @@ mass_defect_server <- function(id) {
         incProgress(0.05, detail = sprintf("Searching %d repeating unit(s): %s",
                                            length(units), paste(units, collapse = ", ")))
 
-        # Resolve the CCS / ion mobility trend mode once. The radio only
-        # exists while the toggle is on, so fall back to RT-only whenever
-        # CCS is unavailable or the toggle is off.
+        # Ffall back to RT-only whenever CCS is unavailable or the toggle is off.
         ccs_mode_sel <- if (!isTRUE(has_ccs()) || !isTRUE(input$use_ccs_toggle)) {
           "rt"
         } else if (is.null(input$ccs_mode)) {
@@ -644,9 +611,6 @@ mass_defect_server <- function(id) {
           )
           if (is.null(res) || !"id" %in% names(res) || !"series_id" %in% names(res)) next
 
-          # Use match on stable 'id' — this is the robust pattern from the
-          # reference implementation. Works regardless of row re-ordering
-          # inside find_homologues.
           idx <- match(m_full$id, res$id)
           sid <- res$series_id[idx]   # NA for rows not in res
           hit <- which(!is.na(sid) & is.na(m_full$series_id))
@@ -673,27 +637,13 @@ mass_defect_server <- function(id) {
     })
     
     # --- Selection & Tables ---
-    # Reactive-value backed selection so it can be programmatically reset
+    # Reactive-value backed selection so it can be reset
     sel_keys_rv <- reactiveVal(character(0))
-    sel_gen_md  <- reactiveVal(0L)  # bumped on reset; plots depend on this
-    # Cache of the exact data.frame currently rendered in `feature_table`
-    # (including `.key`), so the row-selection observer can translate row
-    # indices back into shared keys. Populated inside renderDT via isolate().
+    sel_gen_md  <- reactiveVal(0L)  
     feature_table_view <- reactiveVal(NULL)
-    # Cache of the MD network plot's data + the trace index of its
-    # (initially empty) highlight overlay. Populated at the end of the
-    # renderPlotly reactive so that a plotlyProxy-based observer can
-    # update the highlight in-place without triggering a full re-render.
     md_plot_state <- reactiveVal(NULL)
-    # Tracks which UI element caused the most recent selection change.
-    # Used by the sync observers to skip pushing the selection back to
-    # its own source (which would cause a redundant round-trip and lag).
     sel_source <- reactiveVal("init")
 
-    # Track selections from each linked plot INDEPENDENTLY. plotly::event_data()
-    # is sticky per source, so a shared observe() would union stale keys from
-    # plots the user hasn't touched. Each observer here fully REPLACES the
-    # current selection with only the keys of the plot the user just acted on.
     .apply_sel <- function(ed) {
       sel_source("plot")
       sel_keys_rv(if (!is.null(ed) && length(ed$key)) unique(as.character(ed$key))
@@ -722,7 +672,6 @@ mass_defect_server <- function(id) {
                        duration = 2, id = ns("nn_reset_md"))
     })
 
-    # Same reset behavior wired to the button under the MD network plot
     observeEvent(input$reset_sel_mdnet, {
       sel_source("plot")
       sel_keys_rv(character(0))
@@ -742,14 +691,8 @@ mass_defect_server <- function(id) {
       sel_keys_rv()
     })
     
-    # View cache so a row-selection event can be mapped back to .keys.
     table_selected_view <- reactiveVal(NULL)
 
-    # Snapshot of the plot-driven selection state. Only updates when the
-    # selection came from the plot (or a reset) - NEVER when the user
-    # clicked rows in the table itself. renderDT depends on this
-    # snapshot instead of sel_keys_rv() directly, so clicking table rows
-    # will NOT cause the table to re-render/repaginate.
     md_plot_sel_snapshot <- reactiveVal(list(keys = character(0), src = "init"))
     observeEvent(sel_keys_rv(), {
       if (!identical(sel_source(), "table")) {
@@ -757,9 +700,7 @@ mass_defect_server <- function(id) {
       }
     }, ignoreNULL = FALSE, ignoreInit = TRUE)
 
-    # Same pattern for the MD/m/z-differences feature_table (defined
-    # further down). Separate reactiveVal so each table's render
-    # dependency graph stays independent.
+    
     ft_plot_sel_snapshot <- reactiveVal(list(keys = character(0), src = "init"))
     observeEvent(sel_keys_rv(), {
       if (!identical(sel_source(), "table")) {
@@ -772,15 +713,9 @@ mass_defect_server <- function(id) {
       snap <- md_plot_sel_snapshot()
       sel_keys <- snap$keys
       src      <- snap$src
-      # Coerce to data.frame first so downstream subsetting is not affected by
-      # data.table semantics (which reject `[, cols]` with a character vector
-      # and ignore `drop = FALSE`).
       df_all <- as.data.frame(vals$m)
 
-      # Plot-driven selection: filter table to selected rows only.
-      # Homologue-table-driven selection: filter to the keys of the
-      # selected series (vals$series_keys populated by homol_table).
-      # Otherwise (initial or reset): show ALL rows.
+
       if (!is.null(vals$series_keys) && length(vals$series_keys)) {
         df <- df_all[df_all$.key %in% vals$series_keys, , drop = FALSE]
       } else if (length(sel_keys) && identical(src, "plot")) {
@@ -790,11 +725,7 @@ mass_defect_server <- function(id) {
       }
 
       # Reorder columns: identity first, then MD-derived columns,
-      # then homologue/CCS-related, then everything else. Drop the
-      # internal crosstalk key from the visible table.
-      # Also drop series_id / series_unit entirely if no homologue search
-      # has been run (i.e. those columns are all NA), so the table
-      # doesn't advertise columns the user hasn't populated yet.
+      # then homologue/CCS-related, then everything else. 
       for (sc in c("series_id", "series_unit")) {
         if (sc %in% names(df) && all(is.na(df[[sc]]))) df[[sc]] <- NULL
       }
@@ -809,14 +740,11 @@ mass_defect_server <- function(id) {
 
       table_selected_view(df)
 
-      # Pre-select rows matching the current selection so DT reflects it.
       pre_sel <- if (length(sel_keys))
         which(as.character(df$.key) %in% sel_keys)
       else
         integer(0)
 
-      # Hide the .key column from the visible table (still available for
-      # row-selection lookups via table_selected_view()).
       key_idx <- match(".key", names(df))
       dt <- DT::datatable(df,
                           editable = TRUE, rownames = FALSE, filter = "top",
@@ -828,14 +756,9 @@ mass_defect_server <- function(id) {
                                          processing  = TRUE,
                                          columnDefs = list(list(visible = FALSE,
                                                                 targets = key_idx - 1L))))
-      # OMD_mDa is already integer (see MD_data_processed); no client
-      # rounding needed.
       dt
     })
 
-    # Table -> plot: user picking rows pushes the selection back into
-    # sel_keys_rv. A setequal() guard prevents this from re-firing when
-    # the render pre-selects rows to mirror a plot pick.
     observeEvent(input$table_selected_rows_selected, {
       view <- table_selected_view()
       if (is.null(view) || !nrow(view)) return()
@@ -853,10 +776,7 @@ mass_defect_server <- function(id) {
       if (!length(sel_keys)) return(NULL)
       df <- vals$m[vals$m$.key %in% sel_keys, ]
       if (!nrow(df)) return(NULL)
-      # The intensity selector lives in a lazily-rendered uiOutput, so it can
-      # still be NULL (or point at a stale column) at the moment a series is
-      # selected. Fall back to "intensity" / the first numeric column instead
-      # of erroring out, which previously left the bar plot blank.
+      
       selvar <- input$selectintensity
       if (is.null(selvar) || !nzchar(selvar) || !(selvar %in% names(df)) ||
           !is.numeric(df[[selvar]])) {
@@ -885,9 +805,6 @@ mass_defect_server <- function(id) {
     
     output$homol_table <- DT::renderDT({
       req(vals$m)
-      # Empty placeholder table before / without a homologue run so the
-      # user sees the column structure and knows where results will
-      # appear once they click "Calculate homologues".
       empty <- data.frame(series_id = integer(0), unit = character(0), n = integer(0),
                           mz_min = numeric(0), mz_max = numeric(0),
                           rt_min = numeric(0), rt_max = numeric(0),
@@ -941,11 +858,7 @@ mass_defect_server <- function(id) {
       keys <- vals$m$.key[!is.na(vals$m$series_id) & vals$m$series_id %in% ids]
       cols <- series_palette(length(ids)); names(cols) <- as.character(ids)
       vals$series_keys <- keys; vals$series_sel <- ids; vals$series_cols <- cols
-      # NOTE: intentionally do NOT call vals$d$selection(keys) — the crosstalk
-      # highlight recolors every selected point to a single accent color and
-      # would mask the per-series colors drawn as overlay traces in make_mdplot.
-      # The selected-data table + barplot are already driven by selected_keys()
-      # which short-circuits to vals$series_keys.
+
       if (!is.null(vals$d)) vals$d$selection(NULL)
       showNotification(
         sprintf("Highlighting %d serie%s (%d features).",
@@ -957,8 +870,7 @@ mass_defect_server <- function(id) {
     observeEvent(input$clear_homol_sel, {
       if (!is.null(vals$d)) vals$d$selection(NULL)
       vals$series_keys <- NULL; vals$series_sel <- NULL; vals$series_cols <- NULL
-      # Also deselect the picked rows in the homologue series DataTable so
-      # the UI reflects the cleared state.
+
       DT::selectRows(DT::dataTableProxy("homol_table", session = session), NULL)
       showNotification("Cleared series highlight.", type = "message",
                        duration = 2, id = ns("nn_homol_clear"))
@@ -972,7 +884,6 @@ mass_defect_server <- function(id) {
     
     
     ##########################################################
-    # Replace the MD_data_annotated reactive with this:
     MD_data_annotated <- eventReactive(input$MDcalculate, {
             req(MD_data_raw())
             df <- as.data.frame(MD_data_raw())
@@ -984,8 +895,6 @@ mass_defect_server <- function(id) {
                     showNotification("Error parsing MD/mz differences. Use comma-separated numbers.", type = "error")
                     return(df)
             }
-            # Force MD differences to whole mDa - matching is done against
-            # round(OMD_mDa), which is how the column is rendered in the table.
             md_diffs <- round(md_diffs)
             if (length(md_diffs) != length(mz_diffs)) {
                     showNotification("Number of MD values must match number of m/z values!", type = "error")
@@ -999,20 +908,8 @@ mass_defect_server <- function(id) {
             n <- nrow(df)
             da_tol <- input$MZtolerance
             ids    <- as.character(df$id)
-
-            # Integer-mDa OMD, one value per feature (original ordering).
-            # df$OMD_mDa was already integerized upstream (round half
-            # away from zero) so the values here are IDENTICAL to what
-            # the user sees in every table. No further rounding applied
-            # or needed - if two features display different OMDs, the
-            # algorithm sees different OMDs; if they display the same,
-            # the algorithm sees the same.
             omd_int <- as.integer(df$OMD_mDa)
             mz_val  <- as.numeric(df$mz)
-
-            # Hash map: integer OMD -> vector of feature row indices with
-            # that OMD. Lookup is O(1); total match cost is O(n * k)
-            # where k is the number of target MD/mz pairs.
             by_omd <- split(seq_len(n), omd_int)
 
             withProgress(message = "Calculating MD + m/z differences...", value = 0, {
@@ -1023,9 +920,7 @@ mass_defect_server <- function(id) {
                             out_vec <- character(n)
                             for (i in seq_len(n)) {
                                     # Only features whose integer OMD is
-                                    # EXACTLY omd_int[i] + target_md are
-                                    # ever considered. Nothing else can
-                                    # slip through.
+                                    # EXACTLY omd_int[i] + target_md are considered.
                                     key <- as.character(omd_int[i] + target_md)
                                     cand <- by_omd[[key]]
                                     if (is.null(cand)) next
@@ -1061,12 +956,6 @@ mass_defect_server <- function(id) {
     
     
     # --- MD network plot (linked via crosstalk to the two scatter plots) ---
-    # Full re-render on selection change. This guarantees that:
-    #  1) Selected features appear ONLY on the yellow "Selected" trace.
-    #  2) Unselected features stay on their category trace at dimmed
-    #     opacity when a selection is active — and at full opacity when
-    #     no selection exists. No compounding is possible because every
-    #     render starts from scratch.
     output$md_network_plot <- renderPlotly({
       sel_gen_md()  # re-render on selection reset
       req(MD_data_annotated(), vals$m)
@@ -1076,21 +965,16 @@ mass_defect_server <- function(id) {
       withProgress(message = "Rendering MD network...", value = 0, {
       df_full <- as.data.frame(MD_data_annotated())
 
-      # Keep only rows currently plotted, and bring in the shared .key
       key_map <- as.data.frame(vals$m)[, c("id", ".key")]
       df <- merge(df_full, key_map, by = "id", all = FALSE)
       if (!nrow(df)) return(plot_ly() %>% layout(title = "No overlapping rows to display"))
 
-      # Sample-column filter (shared with the two interactive plots).
       df <- .apply_col_filter(df, input$filter_col)
       if (!nrow(df)) return(plot_ly() %>%
                               layout(title = "No features with data in chosen column"))
 
       diff_cols <- grep(" -> id$", names(df), value = TRUE)
 
-      # "Only matches" filter mirrors the feature_table checkbox: keep
-      # rows with at least one non-empty match column, plus the features
-      # they matched to. This also reduces the point count in the plot.
       if (isTRUE(input$only_matches) && length(diff_cols)) {
         has_match_pre <- rowSums(df[, diff_cols, drop = FALSE] != "") > 0
         matched_ids <- suppressWarnings(as.numeric(unlist(strsplit(
@@ -1104,7 +988,6 @@ mass_defect_server <- function(id) {
           return(plot_ly() %>% layout(title = "No features with matches"))
       }
 
-      # Empty state: no differences calculated yet -> still allow linked selection
       if (length(diff_cols) == 0) {
         is_sel_all <- as.character(df$.key) %in% as.character(sel_keys)
         un_df <- df[!is_sel_all, , drop = FALSE]
@@ -1130,7 +1013,6 @@ mass_defect_server <- function(id) {
         return(p_empty)
       }
 
-      # Build edge segments
       lx <- numeric(0); ly <- numeric(0)
       for (col in diff_cols) {
         nonempty <- which(df[[col]] != "")
@@ -1151,9 +1033,6 @@ mass_defect_server <- function(id) {
       df_with_match <- df[has_match,  , drop = FALSE]
       df_no_match   <- df[!has_match, , drop = FALSE]
 
-      # Partition each category by the current selection. Force character
-      # coercion on both sides so numeric-vs-character .key mismatches
-      # don't silently empty the Selected trace.
       skey    <- as.character(sel_keys)
       no_sel  <- as.character(df_no_match$.key)   %in% skey
       yes_sel <- as.character(df_with_match$.key) %in% skey
@@ -1196,7 +1075,7 @@ mass_defect_server <- function(id) {
                   title = "MD + m/z difference network") %>%
         plotly::layout(dragmode = "select")
       p
-      })  # close withProgress
+      })  
     })
     
     output$feature_table <- renderDT({
@@ -1209,25 +1088,11 @@ mass_defect_server <- function(id) {
             }
             df <- as.data.frame(df)
 
-            # Bring the shared .key from vals$m (added at processing time)
-            # so selections can be translated between this table and the
-            # linked plots in either direction.
             if (!is.null(vals$m) && "id" %in% names(df)) {
                     key_map <- as.data.frame(vals$m)[, c("id", ".key"), drop = FALSE]
                     df <- merge(df, key_map, by = "id", all.x = TRUE, sort = FALSE)
             }
 
-            # NOTE: we deliberately do NOT filter this table by
-            # selected_keys() when the user is actively clicking rows in
-            # the table itself - filtering under the click would drop
-            # DOM row selection and cause an update loop. But when the
-            # selection was made via a linked plot (lasso/box) we DO
-            # filter the table down to those features, and pre-select
-            # every visible row so the setequal() guard in the
-            # rows_selected observer sees "no change" and stays silent.
-            # Depend on ft_plot_sel_snapshot (defined below) instead of
-            # sel_keys_rv() directly so table row-clicks do NOT trigger
-            # a re-render.
             ft_snap <- ft_plot_sel_snapshot()
             sel_now <- ft_snap$keys
             plot_driven <- length(sel_now) > 0 && identical(ft_snap$src, "plot")
@@ -1235,9 +1100,6 @@ mass_defect_server <- function(id) {
               df <- df[df$.key %in% sel_now, , drop = FALSE]
             }
 
-            # "Only matches" filter: keep rows that have at least one
-            # non-empty match column, plus the features they matched to
-            # (so the user sees both sides of every pair).
             if (isTRUE(input$only_matches)) {
                     diff_cols_all <- grep(" -> id$", names(df), value = TRUE)
                     if (length(diff_cols_all)) {
@@ -1263,8 +1125,6 @@ mass_defect_server <- function(id) {
 
             display_cols <- c(leading, diff_cols, other_cols)
 
-            # Cache the rendered frame (including `.key`) so the row-selection
-            # observer below can look up which shared keys the user picked.
             isolate(feature_table_view(df))
 
             sel_arg <- if (plot_driven)
@@ -1279,47 +1139,23 @@ mass_defect_server <- function(id) {
                             columns = diff_cols,
                             backgroundColor = styleEqual("", "white", default = "#e8f5e9")
                     )
-            # OMD_mDa is already integer (MD_data_processed); no client
-            # rounding needed.
             dt
     })
 
-    # Table -> plots: push feature_table row selections into the shared
-    # selection state. Guarded with setequal() to prevent an infinite update
-    # loop when the table re-renders after sel_keys_rv changes.
     observeEvent(input$feature_table_rows_selected, {
       view <- feature_table_view()
       if (is.null(view) || !".key" %in% names(view)) return()
       idx  <- input$feature_table_rows_selected
       keys <- if (length(idx)) unique(as.character(view$.key[idx])) else character(0)
       keys <- keys[!is.na(keys)]
-      # When the table re-renders in response to a plot-driven selection,
-      # DT briefly emits an empty rows_selected event before our
-      # DT::selectRows proxy call reaches the browser. Ignore such
-      # spurious empties while the current selection source is the plot,
-      # otherwise they wipe the highlight after ~1-2s.
       if (identical(sel_source(), "plot") && !length(keys)) return()
       if (!setequal(keys, sel_keys_rv())) {
         sel_source("table")
         sel_keys_rv(keys)
-        # Note: we deliberately do NOT bump sel_gen_md() here. The
-        # highlight overlay is updated in-place via a plotlyProxy
-        # observer below (see md_plot_state), so a full renderPlotly
-        # is not needed and would cause lag on large data.
       }
     }, ignoreNULL = FALSE, ignoreInit = TRUE)
 
-    # Plots -> table: whenever the shared selection changes from an
-    # external source (lasso on a linked plot, reset button, etc.),
-    # highlight the matching rows in the feature_table via a DT proxy.
-    # The setequal() guard in the table->plots observer prevents the
-    # resulting `rows_selected` event from bouncing back and clearing
-    # the state.
     observeEvent(sel_keys_rv(), {
-      # Skip the DT round-trip when the selection came from the DT
-      # itself. Without this, every row click triggers a redundant
-      # DT::selectRows message to the browser, which re-emits
-      # rows_selected and piles up lag on rapid multi-row selection.
       if (identical(sel_source(), "table")) return()
       view <- feature_table_view()
       proxy <- DT::dataTableProxy("feature_table", session = session)
@@ -1332,11 +1168,7 @@ mass_defect_server <- function(id) {
       DT::selectRows(proxy, rows)
     }, ignoreNULL = FALSE, ignoreInit = TRUE)
 
-    # (MD network selection visuals are now handled by full re-render of
-    #  output$md_network_plot on sel_keys_rv() change — no proxy needed.)
-    
-    
-    
+
     ##########################################################                
     
     # --- Sample comparison ---
@@ -1361,7 +1193,6 @@ mass_defect_server <- function(id) {
       }))
     })
 
-    # Named vector: names = "Sample 1", "Sample 2", ...; values = chosen column names
     sample_map <- reactive({
       req(input$n_samples)
       n <- max(2, as.integer(input$n_samples))
@@ -1373,9 +1204,6 @@ mass_defect_server <- function(id) {
       vals[!is.na(vals) & vals != "(none)" & nzchar(vals)]
     })
 
-
-    # Only rebuild the settings when the "Plot sample comparison" button is
-    # pressed. Selection changes automatically refresh the plot.
     sample_settings <- eventReactive(input$go_sample_comp, {
       req(sample_map())
       showNotification("Building sample comparison...", type = "message",
@@ -1386,8 +1214,6 @@ mass_defect_server <- function(id) {
     }, ignoreNULL = FALSE)
 
     output$sample_x_var_ui <- renderUI({
-      # Prefer the mapped MD data; fall back to raw so the selector is
-      # available even before Process is clicked.
       src <- if (!is.null(vals$m)) vals$m else raw_input()
       req(src)
       cols <- setdiff(names(src), ".key")
@@ -1491,7 +1317,6 @@ mass_defect_server <- function(id) {
                   value = c(0, ceiling(max(v) * 10) / 10), step = 0.05)
     })
 
-    # Plot button appears below the sliders once composition is computed.
     output$mc_plot_btn <- renderUI({
       req(molcomp_ready())
       actionButton(ns("mc_plot"), "Plot", width = "100%",
@@ -1560,14 +1385,9 @@ mass_defect_server <- function(id) {
     })
 }
 
-# Helper for plotting within module
+
 make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabled, intensity_col, series_sel, series_cols, show_legend, source_id, sel_keys = NULL) {
   m <- shared_data$data(withSelection = FALSE)
-  # Robust intensity->size mapping. Guards:
-  #  - column missing / non-numeric  -> constant size
-  #  - all-NA or zero-range          -> constant size
-  #  - individual NA/Inf values      -> replaced with median size
-  # sizemode="diameter" + explicit sizemin so small points remain visible in scattergl.
   size_const <- 7
   point_sizes <- rep(size_const, nrow(m))
   use_size <- FALSE
@@ -1587,17 +1407,13 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
   }
 
   base_col <- if (!is.null(series_sel)) "rgba(60,60,60,0.18)" else "rgba(0, 114, 178, 0.75)"  # Okabe-Ito blue
-  # Split points into two traces so BOTH appear as separate legend
-  # entries ("All features" in blue, "Selected" in yellow). This keeps
-  # the correct recolouring behaviour while restoring the legend.
+
   if (!is.null(sel_keys) && length(sel_keys) && ".key" %in% names(m)) {
     is_sel <- as.character(m$.key) %in% as.character(sel_keys)
   } else {
     is_sel <- rep(FALSE, nrow(m))
   }
-  # When a selection is active, fade the unselected points so the yellow
-  # selection stands out (mirrors the old plotly::highlight opacityDim
-  # behaviour that was lost when we split the points into two traces).
+  
   has_selection <- any(is_sel)
   base_col_eff <- if (has_selection) {
     if (!is.null(series_sel)) "rgba(60,60,60,0.10)" else "rgba(0, 114, 178, 0.20)"
@@ -1616,11 +1432,7 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
     marker_unsel$sizemode <- "diameter"; marker_unsel$sizemin <- 3
     marker_sel$sizemode   <- "diameter"; marker_sel$sizemin   <- 3
   }
-  # Wrap the SharedData in a filtered SharedData for the "All features"
-  # trace (needed so lasso/box events still fire via crosstalk). The
-  # "Selected" trace is drawn from a plain data.frame — it only needs to
-  # be visible in the legend and painted; it doesn't need to be
-  # lasso-selectable itself.
+
   fig <- plotly::plot_ly(source = source_id)
   if (nrow(df_unsel)) {
     sd_unsel <- crosstalk::SharedData$new(df_unsel, key = ~.key,

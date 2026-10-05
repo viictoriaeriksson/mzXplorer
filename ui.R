@@ -2,8 +2,7 @@
 # mzXplorer: UI entry point
 # =========================================================
 
-# Section palette (kept in one place so sidebar panels and main-panel
-# backgrounds stay in sync). Each entry: (background, border/accent).
+# Section palette. Each entry: (background, border/accent).
 .mzx_section_css <- HTML("
   /* Common section wrapper */
   .mzx-section {
@@ -93,10 +92,7 @@
   .navbar { border-bottom: 3px solid #1f77b4; }
 ")
 
-# Lightweight tooltip helper: when the user hovers a selectize dropdown
-# option, copy its text into the `title` attribute so the full name
-# shows as a native tooltip. Uses event delegation on a single mouseover
-# listener — no MutationObserver, no repeated document-wide scans.
+# Tooltip helper
 mzx_selectize_titles_js <- tags$script(HTML("
 $(document).on('mouseover', '.selectize-dropdown-content .option', function(){
   if (!this.hasAttribute('title')) this.setAttribute('title', this.textContent);
@@ -137,8 +133,6 @@ ui <- navbarPage(
     "Instructions",
     fluidPage(
             shiny::br(),
-            # MathJax config must be injected BEFORE MathJax.js loads,
-            # so that $...$ / $$...$$ are accepted as math delimiters.
             tags$head(
               tags$script(type = "text/x-mathjax-config", HTML(
                 "MathJax.Hub.Config({

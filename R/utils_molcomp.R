@@ -1,8 +1,7 @@
-# Molecular composition helpers: element counts, DBE, Van Krevelen ratios.
+# Molecular composition: element counts, DBE, Van Krevelen ratios.
 
 #' Parse a chemical formula string into element counts.
-#' Handles multi-letter symbols (Cl, Br) and implicit-1 counts (CH4).
-#' Parenthesised groups are not expanded.
+#' Handles multi-letter symbols (Cl, Br).
 #' @keywords internal
 parse_one_formula <- function(fs, elements = c("C","H","N","O","F","Cl","Br","I","S","P")) {
   out <- setNames(rep(0L, length(elements)), elements)

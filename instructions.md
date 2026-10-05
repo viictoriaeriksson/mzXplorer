@@ -34,7 +34,7 @@ Names must follow standard R variable rules (letters, digits, `_`, `.`).
 #### 1.1.1 Optional columns
 
 Any additional columns are allowed and become available for plotting,
-filtering, homologue summary and export. Examples: `ccs`, `class`,
+filtering, and export. Examples: `ccs`, `class`,
 `group`, `chemical_formula`, `sample_id`, `feature_id`, per‑sample
 intensity columns (`sample_1`, `sample_2`, …).
 
@@ -42,7 +42,7 @@ intensity columns (`sample_1`, `sample_2`, …).
 
 After a feature file is uploaded, the **Column mapping** section lets you
 assign the file's actual column names to the roles mzXplorer expects
-(`mz`, `rt`, `intensity`, and optionally `ccs` and `id`). Reasonable
+(`mz`, `rt`, `intensity`, and optionally `CCS`, `ID`, and `Chemical Formula`). Reasonable
 defaults are guessed automatically — just confirm and press **Process**.
 
 
@@ -210,9 +210,9 @@ Use **Clear series selection** to return to plot‑based selection.
 
 ### 2.5 Molecular Composition *(optional)*
 
-Enables **Molecular Composition** analysis by calculation of Double Bond Equivalnet (DBE) and
-ratios fo H/C and O/C from chemical formulas. The results are presented as two interactive plots, 
-one for DBE and one for H/C and O/C (Van Krevelen). Requires the feature list file to 
+Enables **Molecular Composition** analysis by calculation of Double Bond Equivalent (DBE) and
+ratios of H/C and O/C from chemical formulas. The results are presented as two interactive plots, 
+one for DBE (DBE = C − H/2 + N/2 − X/2 + 1 (X = F+Cl+Br+I)) and one for H/C (or F/C, Br/C, Cl/C) and O/C (Van Krevelen). Requires the feature list file to 
 contain chemical formulas information.
 
 
@@ -410,7 +410,7 @@ Columns:
     table with all original columns plus every new ISF / NL / adduct
     column, respecting manual re‑tags.
     
-### 3.7 Neutral‑loss and adduct annotation
+### 3.5 Neutral‑loss and adduct annotation
 
 **Neutral losses**: select any subset of the preset losses (H₂O
 18.0106, NH₃ 17.0265, CO₂ 43.9898, SO₃ 79.9568, HCl 35.9767, HF

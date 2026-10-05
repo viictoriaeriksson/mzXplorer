@@ -11,9 +11,7 @@
 #' @return data.frame with ISF_annotation, ISF_dDa, ISF_drt
 #' @export
 annotate_isf <- function(ms1, spectra, da_tol, rt_tol, progress = NULL) {
-  # `progress` is an optional callback: function(phase, i, n, detail).
-  # It lets a Shiny caller drive `incProgress()` with per-chunk detail.
-  # Silent no-op when NULL so the function is usable outside Shiny.
+
   .prog <- if (is.function(progress)) progress else function(...) invisible(NULL)
 
   .empty_isf <- function(df) {
@@ -62,16 +60,9 @@ annotate_isf <- function(ms1, spectra, da_tol, rt_tol, progress = NULL) {
   data.table::setorder(dt_scan, rt, mz)
   data.table::setkey(dt_scan, rt, mz)
 
-  # ---- CHUNKED non-equi join by RT ---------------------------------
-  # A single 4-condition non-equi join over the full peak set can
-  # produce enormous intermediates (peak_memory ∝ number of matching
-  # rows across ALL peaks). Splitting the peak table into RT chunks
-  # keeps each intermediate small, allows progress reporting, and lets
-  # the caller cancel between chunks. Speed is comparable or better
-  # for large inputs because each chunk's dt_scan pre-filter is tighter.
+
   data.table::setorder(all_peaks, precursor_rt)
   n_peaks   <- nrow(all_peaks)
-  # ~30k peaks per chunk is a good sweet spot on typical hardware.
   chunk_sz  <- 30000L
   n_chunks  <- max(1L, as.integer(ceiling(n_peaks / chunk_sz)))
   .prog("match", 0L, n_chunks,
@@ -93,8 +84,6 @@ annotate_isf <- function(ms1, spectra, da_tol, rt_tol, progress = NULL) {
     rt_hi_i <- max(peaks_i$rt_high, na.rm = TRUE)
     mz_lo_i <- min(peaks_i$mz_low,  na.rm = TRUE)
     mz_hi_i <- max(peaks_i$mz_high, na.rm = TRUE)
-    # Restrict dt_scan to this chunk's bounding box — usually 5-20x
-    # smaller than the global scan set, which is the real speed win.
     scan_i <- dt_scan[rt >= rt_lo_i & rt <= rt_hi_i &
                       mz >= mz_lo_i & mz <= mz_hi_i]
 
@@ -124,24 +113,15 @@ annotate_isf <- function(ms1, spectra, da_tol, rt_tol, progress = NULL) {
         sprintf("Filtering %s raw matches...",
                 format(nrow(matches), big.mark = " ")))
   # Discard self-hits and any match where the "fragment" is heavier than
-  # its own precursor - both are meaningless as ISF.
+  # its own precursor 
   matches <- matches[(is.na(precursor_id) | id != precursor_id) &
                      (is.na(precursor_mz) | feat_mz <= precursor_mz)]
 
   if (!nrow(matches)) return(.empty_isf(as.data.frame(dt_ms1)))
 
-  # Resolve the MS1 precursor RT from the MS1 feature table (by id).
-  # The `precursor_rt` we joined on so far is the MS2 SCAN rt, not the
-  # rt of the MS1 feature with id == precursor_id. Users expect ISF_drt
-  # to be the RT delta between the two MS1 features (fragment and its
-  # precursor), so we replace precursor_rt with the MS1 lookup and then
-  # re-apply the RT tolerance to enforce it MS1-to-MS1.
   ms1_rt_map <- dt_ms1[, .(precursor_id = id, ms1_prec_rt = rt)]
   matches <- merge(matches, ms1_rt_map, by = "precursor_id",
                    all.x = TRUE, sort = FALSE)
-  # Drop matches whose precursor_id cannot be resolved to an MS1 row
-  # (defensive - shouldn't normally happen since precursor_ids come
-  # from the same feature list).
   matches <- matches[!is.na(ms1_prec_rt)]
   if (!nrow(matches)) return(.empty_isf(as.data.frame(dt_ms1)))
   matches[, precursor_rt := ms1_prec_rt][, ms1_prec_rt := NULL]
@@ -270,13 +250,6 @@ annotate_extra <- function(df, nl_list = c(), adduct_list = c(),
     }
   }
 
-  # Helper: one shifted non-equi self-join for a given neutral-loss mass X.
-  # Semantics: precursor i has larger m/z; fragment j has smaller m/z with
-  # (mz_i - mz_j) ~ X within a symmetric ±da_tol window.
-  # Returns rows with mz/rt for both partners so callers can compute deltas.
-  # NB: for non-equi joins, the join columns (`mz`, `rt`) in the result
-  #     take the *query bound* values from `q`, NOT the LHS row values.
-  #     We therefore reference the LHS row values with the `x.` prefix.
   .match_shift <- function(X) {
     q <- dt[, .(j_id = id, j_mz = mz, j_rt = rt, j_int = intensity,
                 rt_lo = rt - rt_tol, rt_hi = rt + rt_tol,
@@ -302,13 +275,12 @@ annotate_extra <- function(df, nl_list = c(), adduct_list = c(),
     }), use.names = TRUE, fill = TRUE)
     if (nrow(nl_hits)) {
       # ΔDa signed: (mz_i - mz_j) - X — how far the observed mass gap is
-      # from the target neutral-loss mass. Positive = gap larger than X.
+      # from the target neutral-loss mass.
       nl_hits[, dDa   := abs((i_mz - j_mz) - nl_mass)]
       nl_hits[, drt   := j_rt - i_rt]
       nl_hits[, ratio := as.numeric(j_int) / as.numeric(i_int)]
       # Sort so the best (smallest |dDa|) precursor match is listed first
-      # within each fragment - this way the comma-separated columns line
-      # up with the "closest match" annotation the user is looking for.
+      # within each fragment.
       nl_hits[, .abs_dDa := abs(dDa)]
       data.table::setorder(nl_hits, j_id, .abs_dDa)
       nl_hits[, .abs_dDa := NULL]
@@ -688,8 +660,7 @@ strict_rt_filter <- function(df, trend = NULL,
         }
         
         # Enforce monotonicity on the dimension(s) the user actually
-        # selected. Previously ccs_mode was accepted but ignored, so a
-        # CCS-only run was still filtered on RT.
+        # selected. 
         use_rt  <- ccs_mode %in% c("rt", "both")  && "rt"  %in% names(df)
         use_ccs <- ccs_mode %in% c("ccs", "both") && "ccs" %in% names(df)
         if (!use_rt && !use_ccs) return(df)
@@ -697,12 +668,8 @@ strict_rt_filter <- function(df, trend = NULL,
         sids <- unique(na.omit(df$series_id))
         if (!length(sids)) return(df)
         
-        # Greedy forward scan: walk the series in ascending m/z and drop any
+        # walk the series in ascending m/z and drop any
         # member that breaks the trend relative to the last *kept* member.
-        # The previous implementation took a single diff() over the original
-        # sequence, so once an offending point was removed the remaining
-        # neighbours were never re-checked and non-monotonic series survived
-        # (e.g. rt = 1, 5, 2, 3 kept the 1 -> 5 -> 3 violation).
         keep_monotonic <- function(v) {
                 n    <- length(v)
                 keep <- rep(TRUE, n)
