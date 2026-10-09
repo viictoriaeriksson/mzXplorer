@@ -69,7 +69,11 @@ isf_ui <- function(id) {
                 tags$br(), tags$br(),
                 checkboxInput(ns('ins'), 'Show intensity as size', FALSE),
                 checkboxInput(ns('show_leg'), 'Show plot legends', TRUE),
-                uiOutput(ns("slide_ui")),
+                checkboxInput(ns("show_filters"), "Filters", FALSE),
+                conditionalPanel(
+                  condition = sprintf("input['%s'] == true", ns("show_filters")),
+                  uiOutput(ns("slide_ui"))
+                ),
                 actionButton(ns('go_plot'), 'Plot', width = "100%", class = "btn-info")
               )
             ),
@@ -473,7 +477,11 @@ isf_server <- function(id) {
         fluidRow(
           column(6, selectInput(ns('filter_col'),
                                 'Filter by sample (select sample column). Filter applies to network plot as well.',
-                                choices = c("(none)", nms), selected = "(none)"))
+                                choices = c("(none)", nms), selected = "(none)")),
+          column(6, tags$div(style = "margin-top:28px;",
+                             checkboxInput(ns("table_only_selected"),
+                                           "Show only selected points in table",
+                                           value = FALSE)))
         ),
         fluidRow(
           column(3, selectInput(ns('x1'), 'X Plot 1', choices = nms, selected = pick("mz", 1))),
@@ -590,10 +598,12 @@ isf_server <- function(id) {
     sel_source   <- reactiveVal("init")
 
     .apply_sel_isf <- function(ed) {
-      new_keys <- if (!is.null(ed) && length(ed$key))
-        unique(as.character(ed$key)) else character(0)
+      # Ignore points from traces without a crosstalk key (overlay traces
+      # and edge lines), which arrive as NA and would corrupt the selection.
+      k <- if (is.null(ed)) character(0) else as.character(ed$key)
+      k <- k[!is.na(k) & nzchar(k) & k != "NA"]
       sel_source("plot")
-      sel_keys_rv(new_keys)
+      sel_keys_rv(unique(k))
     }
     observeEvent(plotly::event_data("plotly_selected", source = ns("p1")),
                  .apply_sel_isf(plotly::event_data("plotly_selected", source = ns("p1"))),
@@ -652,7 +662,8 @@ isf_server <- function(id) {
       df_all <- .reorder_isf_cols(as.data.frame(vals$df_filtered))
       key_col <- if (".key" %in% names(df_all)) ".key" else "id"
 
-      if (length(keys) && identical(src, "plot")) {
+      if (isTRUE(input$table_only_selected) &&
+          length(keys) && identical(src, "plot")) {
         df <- df_all[as.character(df_all[[key_col]]) %in% keys, , drop = FALSE]
         pre_sel <- seq_len(nrow(df))
       } else {
@@ -718,9 +729,7 @@ isf_server <- function(id) {
 
       dt <- DT::datatable(res,
                           rownames = FALSE,
-                          # Performance for large datasets: paginate on the
-                          # server, defer row rendering until visible, and
-                          # show a processing indicator while DT works.
+                          # Performance for large datasets
                           options = list(scrollX = TRUE,
                                          pageLength = 25,
                                          deferRender = TRUE,
@@ -1177,6 +1186,18 @@ isf_server <- function(id) {
         fig
       })
     })
+
+    observeEvent(list(input$file_feat, input$file_frag), {
+      vals$d <- NULL; vals$df_annotated <- NULL
+      vals$df_filtered <- NULL; vals$orig_df <- NULL
+
+      sel_source("init")
+      sel_keys_rv(character(0))
+      sel_gen_isf(sel_gen_isf() + 1L)
+      plot_sel_snapshot(list(keys = character(0), src = "init"))
+      table_selected_view(NULL)
+    }, ignoreInit = TRUE)
+
   })
 }
 
@@ -1283,6 +1304,7 @@ make_isf_scatter <- function(sd, xv, yv, sid,
     p <- p %>% plotly::add_markers(
       x = df_sel[[xv]], y = df_sel[[yv]],
       type = "scattergl", mode = "markers",
+      key = if (".key" %in% names(df_sel)) as.character(df_sel$.key) else NULL,
       name = "Selected", showlegend = show_legend,
       marker = marker_sel, inherit = FALSE,
       hovertemplate = paste0(xv, "=", xfmt, "<br>", yv, "=", yfmt, "<extra></extra>"))

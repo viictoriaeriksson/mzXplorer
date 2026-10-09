@@ -709,131 +709,53 @@ strict_rt_filter <- function(df, trend = NULL,
 
 ########### MD calculation function #############
 
+# Nominal-mass operator. `how` is one of "round", "floor", "ceiling".
+.md_nom <- function(x, how) {
+        switch(how,
+               round   = round(x),
+               floor   = floor(x),
+               ceiling = ceiling(x),
+               round(x))
+}
+
+# Mass defect = value - nominal(value).
+.md_defect <- function(x, how) round(x - .md_nom(x, how), digits = 7)
+
+# getmdh(): first-order mass defect uses the user-selected rounding mode;
+# second- and third-order defects always use ceiling
 getmdh <- function(mz, cus = c("CH2,H2"), method = "round") {
-        getorder <- function(input) {
-                trimws(if (grepl(',', input)) unlist(strsplit(input, ',')) else input)
-        }
-        temp <- getorder(cus)
-        cus  <- NULL
-        for (i in seq_along(temp)) cus <- c(cus, getmass(temp[i]))
-        
-        if (length(cus) == 2) {
-                omd  <- mz * round(cus[1]) / cus[1]
-                sumd <- cus[2] * round(cus[1]) / cus[1]
-                if (method == 'round') {
-                        MD1 <- round(round(omd) - omd, digits = 7)
-                        md2 <- round(round(sumd) - sumd, digits = 7)
-                        smd <- MD1 / md2
-                        MD2 <- round(round(smd) - smd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2)
-                } else if (method == 'floor') {
-                        MD1 <- round(floor(omd) - omd, digits = 7)
-                        md2 <- round(floor(sumd) - sumd, digits = 7)
-                        smd <- MD1 / md2
-                        MD2 <- round(floor(smd) - smd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2)
-                } else {
-                        MD1 <- round(ceiling(omd) - omd, digits = 7)
-                        md2 <- round(ceiling(sumd) - sumd, digits = 7)
-                        smd <- MD1 / md2
-                        MD2 <- round(ceiling(smd) - smd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2)
-                }
-                
-        } else if (length(cus) == 3) {
-                
-                omd  <- mz * round(cus[1]) / cus[1]
-                sumd <- cus[2] * round(cus[1]) / cus[1]
-                tumd <- cus[3] * round(cus[1]) / cus[1]
-                
-                if (method == 'round') {
-                        MD1 <- round(round(omd) - omd, digits = 7)
-                        md2 <- round(round(sumd) - sumd, digits = 7)
-                        md3 <- round(round(tumd) - tumd, digits = 7)
-                        smd  <- MD1 / md2; tsmd <- md3 / md2
-                        MD2 <- round(round(smd) - smd, digits = 7)
-                        md3 <- round(round(tsmd) - tsmd, digits = 7)
-                        tmd <- MD2 / md3
-                        MD3 <- round(round(tmd) - tmd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
-                } else if (method == 'floor') {
-                        MD1 <- round(floor(omd) - omd, digits = 7)
-                        md2 <- round(floor(sumd) - sumd, digits = 7)
-                        md3 <- round(floor(tumd) - tumd, digits = 7)
-                        smd  <- MD1 / md2; tsmd <- md3 / md2
-                        MD2 <- round(floor(smd) - smd, digits = 7)
-                        md3 <- round(floor(tsmd) - tsmd, digits = 7)
-                        tmd <- MD2 / md3
-                        MD3 <- round(floor(tmd) - tmd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
-                } else {
-                        MD1 <- round(ceiling(omd) - omd, digits = 7)
-                        md2 <- round(ceiling(sumd) - sumd, digits = 7)
-                        md3 <- round(ceiling(tumd) - tumd, digits = 7)
-                        smd  <- MD1 / md2; tsmd <- md3 / md2
-                        MD2 <- round(ceiling(smd) - smd, digits = 7)
-                        md3 <- round(ceiling(tsmd) - tsmd, digits = 7)
-                        tmd <- MD2 / md3
-                        MD3 <- round(ceiling(tmd) - tmd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
-                }
-                
-        } else if (length(cus) > 3) {
-                
+        temp <- trimws(if (grepl(',', cus)) unlist(strsplit(cus, ',')) else cus)
+        cus  <- vapply(temp, getmass, numeric(1), USE.NAMES = FALSE)
+
+        n <- length(cus)
+        if (n > 3) {
                 message("Sorry, only three MD base units are allowed!")
-                omd  <- mz * round(cus[1]) / cus[1]
-                sumd <- cus[2] * round(cus[1]) / cus[1]
-                tumd <- cus[3] * round(cus[1]) / cus[1]
-                
-                if (method == 'round') {
-                        MD1 <- round(round(omd) - omd, digits = 7)
-                        md2 <- round(round(sumd) - sumd, digits = 7)
-                        md3 <- round(round(tumd) - tumd, digits = 7)
-                        smd  <- MD1 / md2; tsmd <- md3 / md2
-                        MD2 <- round(round(smd) - smd, digits = 7)
-                        md3 <- round(round(tsmd) - tsmd, digits = 7)
-                        tmd <- MD2 / md3
-                        MD3 <- round(round(tmd) - tmd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
-                } else if (method == 'floor') {
-                        MD1 <- round(floor(omd) - omd, digits = 7)
-                        md2 <- round(floor(sumd) - sumd, digits = 7)
-                        md3 <- round(floor(tumd) - tumd, digits = 7)
-                        smd  <- MD1 / md2; tsmd <- md3 / md2
-                        MD2 <- round(floor(smd) - smd, digits = 7)
-                        md3 <- round(floor(tsmd) - tsmd, digits = 7)
-                        tmd <- MD2 / md3
-                        MD3 <- round(floor(tmd) - tmd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
-                } else {
-                        MD1 <- round(ceiling(omd) - omd, digits = 7)
-                        md2 <- round(ceiling(sumd) - sumd, digits = 7)
-                        md3 <- round(ceiling(tumd) - tumd, digits = 7)
-                        smd  <- MD1 / md2; tsmd <- md3 / md2
-                        MD2 <- round(ceiling(smd) - smd, digits = 7)
-                        md3 <- round(ceiling(tsmd) - tsmd, digits = 7)
-                        tmd <- MD2 / md3
-                        MD3 <- round(ceiling(tmd) - tmd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1, MD2, MD3)
-                }
-                
-        } else {
-                # single MD base
-                if (method == 'round') {
-                        omd <- mz * round(cus) / cus
-                        MD1 <- round(round(omd) - omd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1)
-                } else if (method == 'floor') {
-                        omd <- mz * floor(cus) / cus
-                        MD1 <- round(floor(omd) - omd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1)
-                } else {
-                        omd <- mz * ceiling(cus) / cus
-                        MD1 <- round(ceiling(omd) - omd, digits = 7)
-                        re  <- cbind.data.frame(mz, MD1)
-                }
+                cus <- cus[1:3]
+                n   <- 3
         }
-        return(re)
+
+        # Scaling factor built from the first base unit.
+        scale1 <- .md_nom(cus[1], method) / cus[1]
+
+        omd <- mz * scale1
+        MD1 <- .md_defect(omd, method)
+        if (n == 1) return(cbind.data.frame(mz, MD1))
+
+        sumd <- cus[2] * scale1
+        md2  <- .md_defect(sumd, method)
+
+        # Second order onwards: ceiling regardless of the selected mode.
+        smd <- MD1 / md2
+        MD2 <- .md_defect(smd, "ceiling")
+        if (n == 2) return(cbind.data.frame(mz, MD1, MD2))
+
+        tumd  <- cus[3] * scale1
+        md3   <- .md_defect(tumd, method)
+        tsmd  <- md3 / md2
+        md3_2 <- .md_defect(tsmd, "ceiling")
+        tmd   <- MD2 / md3_2
+        MD3   <- .md_defect(tmd, "ceiling")
+        cbind.data.frame(mz, MD1, MD2, MD3)
 }
 
 

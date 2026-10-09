@@ -33,9 +33,13 @@ mass_defect_ui <- function(id) {
                 tags$br(), tags$br(),
                 checkboxInput(ns('ins'), 'Show intensity/variable as size', FALSE),
                 checkboxInput(ns("show_leg"), "Show plot legends", TRUE),
-                uiOutput(ns("slide1")),
-                uiOutput(ns("slide2")),
-                uiOutput(ns("slide3")),
+                checkboxInput(ns("show_filters"), "Filters", FALSE),
+                conditionalPanel(
+                  condition = sprintf("input['%s'] == true", ns("show_filters")),
+                  uiOutput(ns("slide1")),
+                  uiOutput(ns("slide2")),
+                  uiOutput(ns("slide3"))
+                ),
                 actionButton(ns('go'), 'Plot', width = "100%", class = "btn-primary"),
                 tags$br(), tags$br(),
                 tags$button("Reload session",
@@ -97,10 +101,14 @@ mass_defect_ui <- function(id) {
                          width = "100%",
                          style = "background-color:#b8377a; border-color:#b8377a; color:#fff; font-weight:600;"),
             tags$br(), tags$br(),
-            uiOutput(ns("slide_nc")),
-            uiOutput(ns("slide_dbe")),
-            uiOutput(ns("slide_hc")),
-            uiOutput(ns("slide_oc")),
+            checkboxInput(ns("mc_show_filters"), "Filters", FALSE),
+            conditionalPanel(
+              condition = sprintf("input['%s'] == true", ns("mc_show_filters")),
+              uiOutput(ns("slide_nc")),
+              uiOutput(ns("slide_dbe")),
+              uiOutput(ns("slide_hc")),
+              uiOutput(ns("slide_oc"))
+            ),
             uiOutput(ns("mc_plot_btn"))
           )
         ),
@@ -200,15 +208,17 @@ mass_defect_ui <- function(id) {
               checkboxInput(ns("only_matches"),
                             "Show only features with a match (and their matched partners)",
                             value = FALSE),
-              tags$br(),
-              DT::DTOutput(ns("feature_table")),
-              tags$br(),
               fluidRow(
-                column(9, plotly::plotlyOutput(ns("md_network_plot"), height = "500px")),
-                column(3, actionButton(ns("reset_sel_mdnet"), "Reset selection",
-                                       class = "btn-outline-secondary",
-                                       style = "margin-top:10px;"))
-              )
+                column(12, actionButton(ns("reset_sel_mdnet"), "Reset selection",
+                                        class = "btn-outline-secondary",
+                                        style = "margin-bottom:8px;"))
+              ),
+              fluidRow(
+                column(6, plotly::plotlyOutput(ns("md_network_plot"),    height = "500px")),
+                column(6, plotly::plotlyOutput(ns("md_network_plot_rt"), height = "500px"))
+              ),
+              tags$br(),
+              DT::DTOutput(ns("feature_table"))
             )
           ),
           tabPanel(
@@ -448,11 +458,17 @@ mass_defect_server <- function(id) {
         fluidRow(
           column(6, selectInput(ns('filter_col'),
                                 'Filter by sample (select sample column). Filter applies to network plot as well.',
-                                choices = c("(none)", names(df)), selected = "(none)"))
+                                choices = c("(none)", names(df)), selected = "(none)")),
+          column(6, tags$div(style = "margin-top:28px;",
+                             checkboxInput(ns("table_only_selected"),
+                                           "Show only selected points in table",
+                                           value = FALSE)))
         ),
         fluidRow(
-          column(3, selectInput(ns('xvar1'), 'X variable Plot 1', choices = names(df), selected = "rt")),
-          column(3, selectInput(ns('yvar1'), 'Y variable Plot 1', choices = names(df), selected = "mz")),
+          column(3, selectInput(ns('xvar1'), 'X variable Plot 1', choices = names(df),
+                                selected = if ("mz" %in% names(df)) "mz" else names(df)[1])),
+          column(3, selectInput(ns('yvar1'), 'Y variable Plot 1', choices = names(df),
+                                selected = if ("Formula1_MD1" %in% names(df)) "Formula1_MD1" else "mz")),
           column(3, selectInput(ns('xvar2'), 'X variable Plot 2', choices = names(df), selected = "RMD_ppm")),
           column(3, selectInput(ns('yvar2'), 'Y variable Plot 2', choices = names(df), selected = "mz"))
         )
@@ -470,9 +486,19 @@ mass_defect_server <- function(id) {
       req(MD_data_raw())
       withProgress(message = "Processing Mass Defect Analysis...", value = 0, {
         m <- MD_data_raw()
-        m <- m[m$intensity >= input$slide1[1] & m$intensity <= input$slide1[2] &
-               m$mz >= input$slide2[1] & m$mz <= input$slide2[2] &
-               m$rt >= input$slide3[1] & m$rt <= input$slide3[2], ]
+        # Range sliders live behind the "Filters" checkbox; when it has never
+        # been opened the inputs are NULL, which must mean "no filtering"
+        # rather than "keep nothing".
+        .rng <- function(v, col) {
+          if (is.null(v) || length(v) < 2 || any(!is.finite(v))) {
+            rep(TRUE, length(col))
+          } else {
+            col >= v[1] & col <= v[2]
+          }
+        }
+        m <- m[.rng(input$slide1, m$intensity) &
+               .rng(input$slide2, m$mz) &
+               .rng(input$slide3, m$rt), ]
 
         m$series_id <- NA_integer_
         m$series_unit <- NA_character_
@@ -578,6 +604,8 @@ mass_defect_server <- function(id) {
           if (is.null(v) || is.na(v)) 0 else v
         }
 
+        vals$ccs_used <- ccs_mode_sel %in% c("ccs", "both")
+
         # Initialise result columns as NA.
         m_full$series_id   <- NA_integer_
         m_full$series_unit <- NA_character_
@@ -646,8 +674,9 @@ mass_defect_server <- function(id) {
 
     .apply_sel <- function(ed) {
       sel_source("plot")
-      sel_keys_rv(if (!is.null(ed) && length(ed$key)) unique(as.character(ed$key))
-                  else character(0))
+      k <- if (is.null(ed)) character(0) else as.character(ed$key)
+      k <- k[!is.na(k) & nzchar(k) & k != "NA"]
+      sel_keys_rv(unique(k))
     }
     observeEvent(plotly::event_data("plotly_selected", source = ns("plot1")),
                  .apply_sel(plotly::event_data("plotly_selected", source = ns("plot1"))),
@@ -657,6 +686,9 @@ mass_defect_server <- function(id) {
                  ignoreNULL = FALSE, ignoreInit = TRUE)
     observeEvent(plotly::event_data("plotly_selected", source = ns("mdnet")),
                  .apply_sel(plotly::event_data("plotly_selected", source = ns("mdnet"))),
+                 ignoreNULL = FALSE, ignoreInit = TRUE)
+    observeEvent(plotly::event_data("plotly_selected", source = ns("mdnetrt")),
+                 .apply_sel(plotly::event_data("plotly_selected", source = ns("mdnetrt"))),
                  ignoreNULL = FALSE, ignoreInit = TRUE)
 
     observeEvent(input$reset_sel_md, {
@@ -716,7 +748,12 @@ mass_defect_server <- function(id) {
       df_all <- as.data.frame(vals$m)
 
 
-      if (!is.null(vals$series_keys) && length(vals$series_keys)) {
+      # The table is narrowed to the current selection only while
+      # "Show only selected points in table" is ticked; otherwise the full
+      # table stays visible and the selection is merely highlighted.
+      if (!isTRUE(input$table_only_selected)) {
+        df <- df_all
+      } else if (!is.null(vals$series_keys) && length(vals$series_keys)) {
         df <- df_all[df_all$.key %in% vals$series_keys, , drop = FALSE]
       } else if (length(sel_keys) && identical(src, "plot")) {
         df <- df_all[df_all$.key %in% sel_keys, , drop = FALSE]
@@ -805,17 +842,24 @@ mass_defect_server <- function(id) {
     
     output$homol_table <- DT::renderDT({
       req(vals$m)
+
+      ccs_available <- isTRUE(vals$ccs_used) &&
+        "ccs" %in% names(vals$m) &&
+        any(is.finite(suppressWarnings(as.numeric(vals$m$ccs))))
       empty <- data.frame(series_id = integer(0), unit = character(0), n = integer(0),
                           mz_min = numeric(0), mz_max = numeric(0),
                           rt_min = numeric(0), rt_max = numeric(0),
-                          int_sum = numeric(0),
-                          ccs_min = numeric(0), ccs_max = numeric(0),
-                          ccs_range = numeric(0))
+                          int_sum = numeric(0))
+      if (ccs_available) {
+        empty$ccs_min   <- numeric(0)
+        empty$ccs_max   <- numeric(0)
+        empty$ccs_range <- numeric(0)
+      }
       has_sid <- "series_id" %in% names(vals$m)
       if (!has_sid) {
         return(DT::datatable(
           empty, rownames = FALSE, selection = "multiple",
-          caption = "No homologue search has been run yet. Enable 'Detect homologues in filtered data' in the sidebar and click 'Calculate homologues'.",
+          caption = "No homologue search has been run yet. Set the parameters in the sidebar and click 'Calculate homologues'.",
           options = list(scrollX = TRUE, dom = "t")))
       }
       ms <- vals$m[!is.na(vals$m$series_id), ]
@@ -825,7 +869,8 @@ mass_defect_server <- function(id) {
           caption = "Homologue search ran but no series were found with the current settings. Try loosening ppm / RT tolerance or reducing minimum series length.",
           options = list(scrollX = TRUE, dom = "t")))
       }
-      has_ccs <- "ccs" %in% names(ms) && any(is.finite(ms$ccs))
+      has_ccs <- isTRUE(vals$ccs_used) &&
+        "ccs" %in% names(ms) && any(is.finite(ms$ccs))
       summ <- ms %>% group_by(series_id) %>% summarize(
         unit = if ("series_unit" %in% names(ms)) dplyr::first(stats::na.omit(series_unit)) else NA_character_,
         n = n(),
@@ -836,10 +881,10 @@ mass_defect_server <- function(id) {
         ccs_max = if (has_ccs) suppressWarnings(max(ccs, na.rm = TRUE)) else NA_real_,
         .groups = "drop"
       )
-      summ$ccs_range <- round(summ$ccs_max - summ$ccs_min, 1)
       base_cols <- c("series_id", "unit", "n",
                      "mz_min", "mz_max", "rt_min", "rt_max", "int_sum")
       if (has_ccs) {
+        summ$ccs_range <- round(summ$ccs_max - summ$ccs_min, 1)
         summ <- summ[, c(base_cols, "ccs_min", "ccs_max", "ccs_range"), drop = FALSE]
       } else {
         summ <- summ[, base_cols, drop = FALSE]
@@ -955,23 +1000,16 @@ mass_defect_server <- function(id) {
     })
     
     
-    # --- MD network plot (linked via crosstalk to the two scatter plots) ---
-    output$md_network_plot <- renderPlotly({
-      sel_gen_md()  # re-render on selection reset
+    # --- MD network plots (linked via crosstalk to the two scatter plots) ---
+    .md_net_data <- reactive({
       req(MD_data_annotated(), vals$m)
-      sel_keys <- sel_keys_rv()
-      has_sel  <- length(sel_keys) > 0L
-      dim_op   <- if (has_sel) 0.3 else 1
-      withProgress(message = "Rendering MD network...", value = 0, {
       df_full <- as.data.frame(MD_data_annotated())
-
       key_map <- as.data.frame(vals$m)[, c("id", ".key")]
       df <- merge(df_full, key_map, by = "id", all = FALSE)
-      if (!nrow(df)) return(plot_ly() %>% layout(title = "No overlapping rows to display"))
+      if (!nrow(df)) return(NULL)
 
       df <- .apply_col_filter(df, input$filter_col)
-      if (!nrow(df)) return(plot_ly() %>%
-                              layout(title = "No features with data in chosen column"))
+      if (!nrow(df)) return(NULL)
 
       diff_cols <- grep(" -> id$", names(df), value = TRUE)
 
@@ -984,98 +1022,121 @@ mass_defect_server <- function(id) {
         keep_row <- has_match_pre |
           (if ("id" %in% names(df)) df$id %in% matched_ids else FALSE)
         df <- df[keep_row, , drop = FALSE]
-        if (!nrow(df))
-          return(plot_ly() %>% layout(title = "No features with matches"))
+        if (!nrow(df)) return(NULL)
       }
 
-      if (length(diff_cols) == 0) {
-        is_sel_all <- as.character(df$.key) %in% as.character(sel_keys)
-        un_df <- df[!is_sel_all, , drop = FALSE]
-        se_df <- df[ is_sel_all, , drop = FALSE]
-        sd_un <- crosstalk::SharedData$new(un_df, key = ~.key, group = ns("md"))
-        p_empty <- plot_ly(source = ns("mdnet")) %>%
-          add_markers(data = sd_un, x = ~OMD_mDa, y = ~mz,
-                      marker = list(color = "rgba(0, 114, 178, 0.55)", size = 7,
-                                    opacity = dim_op,
-                                    line = list(color = "rgba(0,0,0,0.35)", width = 0.4)),
-                      hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
-                      customdata = ~id, name = "features") %>%
-          add_markers(x = se_df$OMD_mDa, y = se_df$mz,
-                      name = "Selected",
-                      marker = list(color = mzx_highlight_color, size = 8, opacity = 0.95,
-                                    line = list(color = "#8a7a00", width = 1.2)),
-                      hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
-                      customdata = if (nrow(se_df)) se_df$id else integer(0),
-                      inherit = FALSE, showlegend = has_sel) %>%
-          mzx_style(xtitle = "OMD (mDa)", ytitle = "m/z",
-                    title = "No MD + m/z differences calculated yet") %>%
-          plotly::layout(dragmode = "select")
-        return(p_empty)
+      if (!length(diff_cols)) {
+        return(list(df = df, diff_cols = character(0),
+                    from_idx = integer(0), to_idx = integer(0),
+                    role = rep("unlinked", nrow(df))))
       }
 
-      lx <- numeric(0); ly <- numeric(0)
+      from_all <- integer(0); to_all <- integer(0)
       for (col in diff_cols) {
         nonempty <- which(df[[col]] != "")
         if (!length(nonempty)) next
         matched_lists <- strsplit(df[[col]][nonempty], ", ", fixed = TRUE)
-        lens <- lengths(matched_lists)
-        from_idx <- rep(nonempty, lens)
+        from_idx <- rep(nonempty, lengths(matched_lists))
         to_ids   <- suppressWarnings(as.numeric(unlist(matched_lists, use.names = FALSE)))
         to_idx   <- match(to_ids, df$id)
         ok <- !is.na(to_idx)
         if (!any(ok)) next
-        from_idx <- from_idx[ok]; to_idx <- to_idx[ok]
-        lx <- c(lx, as.vector(rbind(df$OMD_mDa[from_idx], df$OMD_mDa[to_idx], NA_real_)))
-        ly <- c(ly, as.vector(rbind(df$mz[from_idx],      df$mz[to_idx],      NA_real_)))
+        from_all <- c(from_all, from_idx[ok])
+        to_all   <- c(to_all,   to_idx[ok])
       }
 
-      has_match     <- rowSums(df[, diff_cols, drop = FALSE] != "") > 0
-      df_with_match <- df[has_match,  , drop = FALSE]
-      df_no_match   <- df[!has_match, , drop = FALSE]
+      role <- rep("unlinked", nrow(df))
+      role[unique(to_all)]   <- "partner"
+      role[unique(from_all)] <- "source"   # source wins if both
 
-      skey    <- as.character(sel_keys)
-      no_sel  <- as.character(df_no_match$.key)   %in% skey
-      yes_sel <- as.character(df_with_match$.key) %in% skey
-      un_no   <- df_no_match  [!no_sel , , drop = FALSE]
-      un_yes  <- df_with_match[!yes_sel, , drop = FALSE]
-      se_df   <- rbind(df_no_match  [ no_sel , , drop = FALSE],
-                       df_with_match[ yes_sel, , drop = FALSE])
+      list(df = df, diff_cols = diff_cols,
+           from_idx = from_all, to_idx = to_all, role = role)
+    })
 
-      sd_no  <- crosstalk::SharedData$new(un_no,  key = ~.key, group = ns("md"))
-      sd_yes <- crosstalk::SharedData$new(un_yes, key = ~.key, group = ns("md"))
 
-      p <- plot_ly(source = ns("mdnet")) %>%
-        add_trace(type = "scattergl", mode = "lines",
-                  x = lx, y = ly,
-                  line = list(color = "rgba(120,120,120,0.35)", width = 1),
-                  showlegend = FALSE, hoverinfo = "skip") %>%
-        add_markers(data = sd_no,  x = ~OMD_mDa, y = ~mz, name = "No match",
-                    type = "scattergl",
-                    marker = list(color = "rgba(86, 180, 233, 0.55)", size = 7,
-                                  opacity = dim_op,
-                                  line = list(color = "rgba(0,0,0,0.35)", width = 0.4)),
-                    hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
-                    customdata = ~id) %>%
-        add_markers(data = sd_yes, x = ~OMD_mDa, y = ~mz, name = "Has match",
-                    type = "scattergl",
-                    marker = list(color = "rgba(213, 94, 0, 0.85)", size = 7,
-                                  opacity = dim_op,
-                                  line = list(color = "#7a2f00", width = 0.5)),
-                    hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
-                    customdata = ~id) %>%
-        add_markers(x = se_df$OMD_mDa, y = se_df$mz,
-                    name = "Selected",
-                    type = "scatter", mode = "markers",
-                    marker = list(color = mzx_highlight_color, size = 8, opacity = 0.95,
-                                  line = list(color = "#8a7a00", width = 1.2)),
-                    hovertemplate = "id=%{customdata}<br>OMD=%{x}<br>m/z=%{y:.4f}<extra></extra>",
-                    customdata = if (nrow(se_df)) se_df$id else integer(0),
-                    inherit = FALSE, showlegend = has_sel) %>%
-        mzx_style(xtitle = "OMD (mDa)", ytitle = "m/z",
-                  title = "MD + m/z difference network") %>%
+    .md_net_plot <- function(nd, xvar, xlab, src_id, title) {
+      sel_keys <- sel_keys_rv()
+      has_sel  <- length(sel_keys) > 0L
+      dim_op   <- if (has_sel) 0.3 else 1
+
+      if (is.null(nd))
+        return(plot_ly() %>% layout(title = "No features to display"))
+      df <- nd$df
+      if (!xvar %in% names(df))
+        return(plot_ly() %>% layout(title = paste0("Column '", xvar, "' not available")))
+
+      xfmt <- if (identical(xvar, "mz")) "%{x:.4f}" else "%{x:.3f}"
+      htpl <- paste0("id=%{customdata}<br>", xlab, "=", xfmt,
+                     "<br>OMD=%{y}<extra></extra>")
+
+      lx <- numeric(0); ly <- numeric(0)
+      if (length(nd$from_idx)) {
+        lx <- as.vector(rbind(df[[xvar]][nd$from_idx], df[[xvar]][nd$to_idx], NA_real_))
+        ly <- as.vector(rbind(df$OMD_mDa[nd$from_idx], df$OMD_mDa[nd$to_idx], NA_real_))
+      }
+
+      skey   <- as.character(sel_keys)
+      is_sel <- as.character(df$.key) %in% skey
+      se_df  <- df[is_sel, , drop = FALSE]
+
+
+      d_prod <- df[nd$role == "source" & !is_sel, , drop = FALSE]
+      d_prec <- df[nd$role != "source" & !is_sel, , drop = FALSE]
+
+      p <- plot_ly(source = src_id)
+      if (length(lx)) {
+        p <- p %>% add_trace(type = "scattergl", mode = "lines", x = lx, y = ly,
+                             line = list(color = "rgba(120,120,120,0.35)", width = 1),
+                             showlegend = FALSE, hoverinfo = "skip")
+      }
+      add_grp <- function(p, d, nm, col, edge) {
+        if (!nrow(d)) return(p)
+        sd <- crosstalk::SharedData$new(d, key = ~.key, group = ns("md"))
+        p %>% add_markers(data = sd,
+                          x = as.formula(paste0("~`", xvar, "`")),
+                          y = ~OMD_mDa,
+                          name = nm, type = "scattergl",
+                          marker = list(color = col, size = 7, opacity = dim_op,
+                                        line = list(color = edge, width = 0.5)),
+                          hovertemplate = htpl, customdata = ~id)
+      }
+      p <- p %>%
+        add_grp(d_prec, "Precursor", "rgba(86, 180, 233, 0.55)", "rgba(0,0,0,0.35)") %>%
+        add_grp(d_prod, "Product",   "rgba(213, 94, 0, 0.85)",   "#7a2f00")
+
+      if (nrow(se_df)) {
+        p <- p %>% add_markers(x = se_df[[xvar]], y = se_df$OMD_mDa,
+                               name = "Selected", type = "scatter", mode = "markers",
+                               key = as.character(se_df$.key),
+                               marker = list(color = mzx_highlight_color, size = 8,
+                                             opacity = 0.95,
+                                             line = list(color = "#8a7a00", width = 1.2)),
+                               hovertemplate = htpl, customdata = se_df$id,
+                               inherit = FALSE, showlegend = has_sel)
+      }
+      p %>%
+        mzx_style(xtitle = xlab, ytitle = "OMD (mDa)", title = title) %>%
         plotly::layout(dragmode = "select")
-      p
-      })  
+    }
+
+    output$md_network_plot <- renderPlotly({
+      sel_gen_md()
+      nd <- .md_net_data()
+      ttl <- if (is.null(nd) || !length(nd$diff_cols))
+        "No MD + m/z differences calculated yet" else "MD + m/z difference network (m/z)"
+      withProgress(message = "Rendering MD network (m/z)...", value = 0.5, {
+        .md_net_plot(nd, "mz", "m/z", ns("mdnet"), ttl)
+      })
+    })
+
+    output$md_network_plot_rt <- renderPlotly({
+      sel_gen_md()
+      nd <- .md_net_data()
+      ttl <- if (is.null(nd) || !length(nd$diff_cols))
+        "No MD + m/z differences calculated yet" else "MD + m/z difference network (RT)"
+      withProgress(message = "Rendering MD network (RT)...", value = 0.5, {
+        .md_net_plot(nd, "rt", "RT", ns("mdnetrt"), ttl)
+      })
     })
     
     output$feature_table <- renderDT({
@@ -1382,6 +1443,29 @@ mass_defect_server <- function(id) {
                  .apply_sel(plotly::event_data("plotly_selected", source = ns("vk"))),
                  ignoreNULL = FALSE, ignoreInit = TRUE)
 
+
+    observeEvent(input$file1, {
+      vals$m <- NULL; vals$d <- NULL; vals$summ <- NULL
+      vals$series_keys <- NULL; vals$series_sel <- NULL; vals$series_cols <- NULL
+      vals$mc_ratio_label <- NULL
+      vals$ccs_used <- NULL
+
+      sel_source("init")
+      sel_keys_rv(character(0))
+      sel_gen_md(sel_gen_md() + 1L)
+      md_plot_sel_snapshot(list(keys = character(0), src = "init"))
+      ft_plot_sel_snapshot(list(keys = character(0), src = "init"))
+      table_selected_view(NULL)
+      feature_table_view(NULL)
+      md_plot_state(NULL)
+
+      molcomp_ready(FALSE)
+      mc_plot_data(NULL)
+
+      output$DTPlot1 <- plotly::renderPlotly(NULL)
+      output$DTPlot2 <- plotly::renderPlotly(NULL)
+    }, ignoreInit = TRUE)
+
     })
 }
 
@@ -1454,6 +1538,7 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
       data = df_sel,
       type = "scattergl",
       x = df_sel[[xvar]], y = df_sel[[yvar]],
+      key = if (".key" %in% names(df_sel)) as.character(df_sel$.key) else NULL,
       marker = marker_sel, name = "Selected", showlegend = show_legend,
       hovertemplate = paste0("<b>id</b>=%{customdata}<br>",
                              xlabel, "=%{x:.4f}<br>",

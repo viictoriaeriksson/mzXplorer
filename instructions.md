@@ -77,19 +77,17 @@ comparing samples.
 | `round`    | standard rounding to the nearest integer (default)   |
 | `ceiling`  | always round up to the next integer                  |
 | `floor`    | always round down to the previous integer            |
-The same mode is applied consistently to MD1, MD2, and MD3.
-
+The same mode is applied to MD1. For MD2, and MD3, ceiling is used.
 \
 After clicking **Process** it computes:  
 -   **OMD** – original mass defect
 -   **RMD** – relative mass defect
 -   **MD1 (MD2**, **MD3)** – user input mass defects\
-  All appear in axis selectors for the interactive plots.
   
 3.  Choose plot ranges (intensity, mz, rt) and click **Plot**. 
     **Two synchronized scatter plots** appear using Plotly.
-4.  Optional sections below are toggled by checkboxes in the sidebar:
-    *Homologue search*, *MD / m/z differences calculation*, *Sample comparison*.
+4.  Optional sections below are found in separate subtabs:
+    *Homologue search*, *Molecular composition*, *MD / m/z differences calculation*, *Sample comparison*.
 
 ### 2.2 Interactive plots
 
@@ -100,18 +98,25 @@ After clicking **Process** it computes:
     (crosstalk‑linked).
 -   Selection drives the **selected‑data table**, the **barplot**, the
     **MD/mz difference table**, and the **sample comparison plot**.
+-   **Show only selected points in table** (checkbox above the plots, next
+    to the sample filter) controls how the selection affects the table.
+    Unticked (default) the full table stays visible and the selected rows
+    are merely highlighted; ticked, the table is narrowed to the current
+    selection. The same checkbox is available on the ISF tab.
 -   Use the **Reset selection** button on the tab to clear all linked
     selections and re‑render the plots.
 
 ### 2.3 Filters
 
-Three automatically‑generated filters:
+Tick **Filters** in the sidebar to reveal three automatically‑generated
+range filters:
 
 -   intensity range
 -   m/z range
 -   retention time (rt) range
 
-Filtering affects plots, homologue detection, the summary table, and
+The checkbox is unticked by default and no filtering is applied while it is
+hidden. Filtering affects plots, homologue detection, the summary table, and
 exported data. Click **Plot** to apply.
 
 ### 2.4 Homologue search *(optional)*
@@ -224,7 +229,7 @@ Enables calculation of **MD / m/z differences** by entering comma‑separated MD
 Differences** to add `Δ → id` columns to the feature table and build a
 difference **network plot**.
 
--   Network plot display features matching the selected MD and mz difference.
+-   Network plot display features matching the selected MD and mz difference as OMD vs mz and OMD vz Rt.
 -   The results table is **filtered by the network plot's selection**
     (lasso/box). Clear the selection to see all features.
 
@@ -267,35 +272,43 @@ values if present.
 In all equations below, $\text{nom}(\cdot)$ denotes the **nominal-mass operator** and can be chosen as `round`, `ceiling`, or `floor`:
 
 
-The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown below.
+Every mass defect is defined as **value minus its nominal value**, i.e. $x - \text{nom}(x)$.
 
-<p><b>OMD</b> — original mass defect</p>
+<p><b>OMD</b> — original mass defect [mDa]</p>
 
 <p>$$ \text{OMD (mDa)} = (m - \text{round}(m)) \times 10^{3} $$</p>
 
-<p>(The OMD column is reported in milli-Daltons - i.e. the raw mass defect is multiplied by $10^{3}$ and then rounded to the nearest integer using round-half-away-from-zero.)</p>
-
-<p><b>RMD</b> - relative mass defect</p>
+<p><b>RMD</b> - relative mass defect [ppm]</p>
 
 <p>$$ \text{RMD (ppm)} = \frac{m - \text{round}(m)}{m} \times 10^{6} $$</p>
 
 <p><b>MD1</b> — first‑order MD with unit $u_1$</p>
 
-<p>$$ m_1 = m \times \frac{\text{round}(u_1)}{u_1} $$</p>
+<p>$$ m_1 = m \times \frac{\text{nom}(u_1)}{u_1} $$</p>
 
-<p>$$ \text{MD1} = \text{nom}(m_1) - m_1 $$</p>
+<p>$$ \text{MD1} = m_1 - \text{nom}(m_1) $$</p>
+
+<p>MD1 uses the rounding mode selected in the sidebar, for both the scaling
+factor and the defect itself.</p>
 
 <p><b>MD2</b> — second‑order MD with unit $u_2$</p>
 
 <p>$$ m_2 = \frac{\text{MD1}(m)}{\text{MD1}(u_2)} $$</p>
 
-<p>$$ \text{MD2} = \text{nom}(m_2) - m_2 $$</p>
+<p>$$ \text{MD2} = m_2 - \text{ceil}(m_2) $$</p>
 
 <p><b>MD3</b> — third‑order MD with unit $u_3$</p>
 
 <p>$$ m_3 = \frac{\text{MD2}(m)}{\text{MD2}(u_3)} $$</p>
 
-<p>$$ \text{MD3} = \text{nom}(m_3) - m_3 $$</p>
+<p>$$ \text{MD3} = m_3 - \text{ceil}(m_3) $$</p>
+
+<p><b>Rounding mode and MD order.</b> The selected rounding mode applies to
+the <b>first order only</b>. Second- and third-order mass defects always use
+$\text{ceil}(\cdot)$, following Roach, Laskin &amp; Laskin (2011)
+<i>Anal. Chem.</i> <b>83</b>, 4924–4929. Changing the rounding mode therefore
+alters MD2 and MD3 only indirectly, through the MD1 values they are
+derived from.</p>
 
 **Examples of the MD‑formula input box**
 
