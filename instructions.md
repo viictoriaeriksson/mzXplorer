@@ -78,11 +78,11 @@ comparing samples.
 | `ceiling`  | always round up to the next integer                  |
 | `floor`    | always round down to the previous integer            |
 The same mode is applied to MD1. For MD2, and MD3, ceiling is used.
-\
+
 After clicking **Process** it computes:  
 -   **OMD** – original mass defect
 -   **RMD** – relative mass defect
--   **MD1 (MD2**, **MD3)** – user input mass defects\
+-   **MD1 (MD2**, **MD3)** – user input mass defects
   
 3.  Choose plot ranges (intensity, mz, rt) and click **Plot**. 
     **Two synchronized scatter plots** appear using Plotly.
@@ -159,10 +159,9 @@ section.
 6.  **Length filter.** Series shorter than **Minimum length** are
     discarded; the rest are renumbered.
 
-Because a step of the unit in m/z corresponds to a fixed shift in
-Kendrick mass, the resulting series are exactly the features that
-would fall on the same horizontal line in a Kendrick mass‑defect plot
-for the same base unit.
+Because a step of the unit in m/z corresponds to a fixed shift in Kendrick mass,
+the resulting series are exactly the features that would fall on the same horizontal line
+in a Kendrick mass‑defect plot for the same base unit.
 _____________________________________________________________________
 
 ##### CCS‑Aware Monotonicity
@@ -222,7 +221,7 @@ contain chemical formulas information.
 
 
 
-### 2.6 MD / m/z differences *(optional)*
+### 2.6 Mass-shift Screening *(optional)*
 
 Enables calculation of **MD / m/z differences** by entering comma‑separated MD
 (mDa) and m/z (Da) pairs plus an m/z tolerance. Click **Calculate MD/mz

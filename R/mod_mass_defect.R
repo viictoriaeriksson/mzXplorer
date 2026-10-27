@@ -113,7 +113,7 @@ mass_defect_ui <- function(id) {
           )
         ),
 
-        # --- Shown on "MD / m/z differences" ---
+        # --- Shown on "Mass-shift screening" ---
         conditionalPanel(
           condition = sprintf("input['%s'] == 'MD_mz_differences'", ns("result_sections")),
           div(class = "mzx-section mzx-mdiff",
@@ -164,6 +164,7 @@ mass_defect_ui <- function(id) {
                 column(width = 6, plotly::plotlyOutput(ns("DTPlot1"))),
                 column(width = 6, plotly::plotlyOutput(ns("DTPlot2")))
               ),
+              uiOutput(ns("table_only_sel_ui")),
               DT::DTOutput(ns("table_selected")),
               fluidRow(style = "margin-top:6px;",
                 column(4, downloadButton(ns("x3"), "Export Data")),
@@ -199,9 +200,9 @@ mass_defect_ui <- function(id) {
             )
           ),
           tabPanel(
-            "MD / m/z differences", value = "MD_mz_differences",
+            "Mass-shift screening", value = "MD_mz_differences",
             div(class = "mzx-pane mzx-mdiff",
-              tags$h4("MD / m/z difference results"),
+              tags$h4("Mass-shift screening results"),
               tags$small(style = "color:#555;",
                          "Table is filtered by the network-plot selection. Use 'Reset selection' to clear."),
               tags$br(),
@@ -452,17 +453,23 @@ mass_defect_server <- function(id) {
     output$slide2 <- renderUI({ df <- MD_data_raw(); sliderInput(ns("slide2"), "m/z range", min = min(df$mz, na.rm=T), max = max(df$mz, na.rm=T), value = range(df$mz, na.rm=T)) })
     output$slide3 <- renderUI({ df <- MD_data_raw(); sliderInput(ns("slide3"), "RT range", min = min(df$rt, na.rm=T), max = max(df$rt, na.rm=T), value = range(df$rt, na.rm=T)) })
     
+    # Only meaningful once a table exists; sits on its own line above the
+    # DataTables controls so it cannot overlap "Show N entries".
+    output$table_only_sel_ui <- renderUI({
+      req(vals$m)
+      tags$div(style = "margin-top:14px; margin-bottom:10px;",
+               checkboxInput(ns("table_only_selected"),
+                             "Show only selected points in table",
+                             value = isTRUE(input$table_only_selected)))
+    })
+
     output$plotctr <- renderUI({
       df <- MD_data_raw()
       tagList(
         fluidRow(
           column(6, selectInput(ns('filter_col'),
                                 'Filter by sample (select sample column). Filter applies to network plot as well.',
-                                choices = c("(none)", names(df)), selected = "(none)")),
-          column(6, tags$div(style = "margin-top:28px;",
-                             checkboxInput(ns("table_only_selected"),
-                                           "Show only selected points in table",
-                                           value = FALSE)))
+                                choices = c("(none)", names(df)), selected = "(none)"))
         ),
         fluidRow(
           column(3, selectInput(ns('xvar1'), 'X variable Plot 1', choices = names(df),
@@ -486,9 +493,7 @@ mass_defect_server <- function(id) {
       req(MD_data_raw())
       withProgress(message = "Processing Mass Defect Analysis...", value = 0, {
         m <- MD_data_raw()
-        # Range sliders live behind the "Filters" checkbox; when it has never
-        # been opened the inputs are NULL, which must mean "no filtering"
-        # rather than "keep nothing".
+        # Range sliders live behind the "Filters" checkbox
         .rng <- function(v, col) {
           if (is.null(v) || length(v) < 2 || any(!is.finite(v))) {
             rep(TRUE, length(col))
@@ -516,9 +521,7 @@ mass_defect_server <- function(id) {
                                     layout(title = "No features with data in chosen column"))
           d_f <- crosstalk::SharedData$new(as.data.frame(m_f),
                                            key = ~.key, group = ns("md"))
-          # Read (NOT isolate) the current lasso selection so the plot
-          # redraws its overlay whenever the selection changes. This makes
-          # a new lasso in a different sample REPLACE the previous overlay.
+
           sel_snapshot <- sel_keys_rv()
           ins_flag <- isolate(input$ins)
           i_col    <- isolate(input$selectintensity)
@@ -589,7 +592,7 @@ mass_defect_server <- function(id) {
         incProgress(0.05, detail = sprintf("Searching %d repeating unit(s): %s",
                                            length(units), paste(units, collapse = ", ")))
 
-        # Ffall back to RT-only whenever CCS is unavailable or the toggle is off.
+        # Fall back to RT-only whenever CCS is unavailable or the toggle is off.
         ccs_mode_sel <- if (!isTRUE(has_ccs()) || !isTRUE(input$use_ccs_toggle)) {
           "rt"
         } else if (is.null(input$ccs_mode)) {
@@ -606,9 +609,13 @@ mass_defect_server <- function(id) {
 
         vals$ccs_used <- ccs_mode_sel %in% c("ccs", "both")
 
-        # Initialise result columns as NA.
         m_full$series_id   <- NA_integer_
         m_full$series_unit <- NA_character_
+        # Near-duplicate m/z candidates that lost their ladder rung. They are
+        # excluded from every count and summary, but kept so the plots can
+        # show them as open circles alongside the series they were rejected
+        # from.
+        m_full$series_alt  <- NA_integer_
         sid_offset <- 0L
 
         for (i in seq_along(units)) {
@@ -621,6 +628,18 @@ mass_defect_server <- function(id) {
           incProgress(0.5 / length(units),
                       detail = sprintf("Unit %d/%d: %s", i, length(units), u))
 
+          # If this repeating unit is also the first-order base unit of one of
+          # the MD formulas, the mass defect has already been computed and is
+          # on screen as Formula1_MD1 / Formula2_MD1. Reuse it so the value
+          # driving the series split is identical to the plotted one.
+          .first_unit <- function(s) {
+            if (is.null(s) || !nzchar(s)) return(NA_character_)
+            trimws(unlist(strsplit(as.character(s), ",", fixed = TRUE)))[1]
+          }
+          md_col_u <- if (identical(u, .first_unit(input$cus1))) "Formula1_MD1"
+                      else if (identical(u, .first_unit(input$cus2))) "Formula2_MD1"
+                      else NULL
+
           res <- tryCatch(
             find_homologues(df = m_clean, unit = u,
                             ppm = input$homol_ppm,
@@ -630,7 +649,9 @@ mass_defect_server <- function(id) {
                             rt_trend = input$homol_rttrend,
                             R2_min = input$homol_R2,
                             ccs_mode = ccs_mode_sel,
-                            ccs_tol  = ccs_tol_sel),
+                            ccs_tol  = ccs_tol_sel,
+                            md_col   = md_col_u,
+                            method   = input$rounding),
             error = function(e) {
               showNotification(sprintf("Unit '%s' failed: %s", u, conditionMessage(e)),
                                type = "error", duration = 8)
@@ -646,6 +667,15 @@ mass_defect_server <- function(id) {
 
           m_full$series_id[hit]   <- as.integer(sid[hit]) + sid_offset
           m_full$series_unit[hit] <- u
+
+          if ("series_alt" %in% names(res)) {
+            alt <- res$series_alt[idx]
+            ahit <- which(!is.na(alt) & is.na(m_full$series_id) &
+                            is.na(m_full$series_alt))
+            if (length(ahit))
+              m_full$series_alt[ahit] <- as.integer(alt[ahit]) + sid_offset
+          }
+
           sid_offset <- max(m_full$series_id, na.rm = TRUE)
         }
 
@@ -748,13 +778,25 @@ mass_defect_server <- function(id) {
       df_all <- as.data.frame(vals$m)
 
 
-      # The table is narrowed to the current selection only while
-      # "Show only selected points in table" is ticked; otherwise the full
-      # table stays visible and the selection is merely highlighted.
+      # Artifacts: near-duplicate features that were excluded from their
+      # series. They have no series_id but keep a series_alt, so they are
+      # identified separately and marked in the table.
+      has_hom <- "series_alt" %in% names(df_all)   
+      if (has_hom) {
+        if (!"series_id"  %in% names(df_all)) df_all$series_id  <- NA_integer_
+        if (!"series_alt" %in% names(df_all)) df_all$series_alt <- NA_integer_
+        is_art <- is.na(df_all$series_id) & !is.na(df_all$series_alt)
+        df_all$status <- ifelse(is_art, "artifact (excluded)",
+                         ifelse(!is.na(df_all$series_id), "included", "-"))
+      } else {
+        is_art <- rep(FALSE, nrow(df_all))
+      }
+
       if (!isTRUE(input$table_only_selected)) {
         df <- df_all
       } else if (!is.null(vals$series_keys) && length(vals$series_keys)) {
-        df <- df_all[df_all$.key %in% vals$series_keys, , drop = FALSE]
+        art_keys <- df_all$.key[is_art & df_all$series_alt %in% vals$series_sel]
+        df <- df_all[df_all$.key %in% c(vals$series_keys, art_keys), , drop = FALSE]
       } else if (length(sel_keys) && identical(src, "plot")) {
         df <- df_all[df_all$.key %in% sel_keys, , drop = FALSE]
       } else {
@@ -763,7 +805,7 @@ mass_defect_server <- function(id) {
 
       # Reorder columns: identity first, then MD-derived columns,
       # then homologue/CCS-related, then everything else. 
-      for (sc in c("series_id", "series_unit")) {
+      for (sc in c("series_id", "series_unit", "series_alt")) {
         if (sc %in% names(df) && all(is.na(df[[sc]]))) df[[sc]] <- NULL
       }
       nms <- setdiff(names(df), ".key")
@@ -771,7 +813,7 @@ mass_defect_server <- function(id) {
       md_cols       <- intersect(c("OMD_mDa", "RMD_ppm"), nms)
       formula_cols  <- grep("^Formula[0-9]+_", nms, value = TRUE)
       series_cols_v <- intersect(c("series_id", "series_unit", "ccs"), nms)
-      leading       <- unique(c(identity_cols, md_cols, formula_cols, series_cols_v))
+      leading       <- unique(c(identity_cols, md_cols, formula_cols, series_cols_v, intersect("status", nms)))
       trailing      <- setdiff(nms, leading)
       df <- df[, c(".key", leading, trailing), drop = FALSE]
 
@@ -793,6 +835,11 @@ mass_defect_server <- function(id) {
                                          processing  = TRUE,
                                          columnDefs = list(list(visible = FALSE,
                                                                 targets = key_idx - 1L))))
+      if ("status" %in% names(df)) dt <- DT::formatStyle(dt, "status",
+                            target = "row",
+                            backgroundColor = DT::styleEqual("artifact (excluded)", "#fff3cd"),
+                            color = DT::styleEqual("artifact (excluded)", "#7a5c00"),
+                            fontStyle = DT::styleEqual("artifact (excluded)", "italic"))
       dt
     })
 
@@ -1556,6 +1603,28 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
         marker = list(color = series_cols[as.character(sid)], size = 8,
                       line = list(color = "#222222", width = 0.6)),
         name = paste0("Series ", sid))
+
+      # Near-duplicate m/z candidates that lost this rung: hollow markers in
+      # the series colour, no connecting line, and excluded from all counts.
+      if ("series_alt" %in% names(m)) {
+        df_a <- m[!is.na(m$series_alt) & m$series_alt == sid, , drop = FALSE]
+        if (nrow(df_a)) {
+          df_a <- df_a[order(df_a$mz), ]
+          fig <- fig %>% plotly::add_trace(
+            data = df_a, x = df_a[[xvar]], y = df_a[[yvar]],
+            type = "scatter", mode = "markers",
+            marker = list(color = "rgba(0,0,0,0)", size = 9,
+                          line = list(color = series_cols[as.character(sid)],
+                                      width = 2)),
+            name = paste0("Series ", sid, " (excluded, m/z too close)"),
+            hovertemplate = paste0("<b>id</b>=%{customdata}<br>",
+                                   xlabel, "=%{x:.4f}<br>",
+                                   ylabel, "=%{y:.4f}",
+                                   "<br><i>excluded: another feature fits this rung better</i>",
+                                   "<extra></extra>"),
+            customdata = df_a$id, inherit = FALSE)
+        }
+      }
     }
   }
   fig %>%

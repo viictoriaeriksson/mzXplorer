@@ -512,12 +512,14 @@ build_edges <- function(mz,
                 to_vec   <- unlist(Map(function(a, b) seq.int(a + 1L, b), L_use, R_use),
                                    use.names = FALSE)
                 
+                .ok <- function(x) !is.na(x) & x
+
                 # --- RT constraints (tolerance + trend) ---
                 if (use_rt) {
                         # tolerance
                         if (rttol > 0) {
                                 d_rt   <- rt[to_vec] - rt[from_vec]
-                                good_t <- abs(d_rt) <= rttol
+                                good_t <- .ok(abs(d_rt) <= rttol)
                                 from_vec <- from_vec[good_t]
                                 to_vec   <- to_vec[good_t]
                         }
@@ -526,9 +528,9 @@ build_edges <- function(mz,
                         if (!is.null(trend) && trend != "any") {
                                 d_rt <- rt[to_vec] - rt[from_vec]
                                 good_trend <- if (trend == "increasing") {
-                                        d_rt >= -1e-12
+                                        .ok(d_rt >= -1e-12)
                                 } else if (trend == "decreasing") {
-                                        d_rt <=  1e-12
+                                        .ok(d_rt <=  1e-12)
                                 } else {
                                         rep(TRUE, length(d_rt))
                                 }
@@ -544,9 +546,9 @@ build_edges <- function(mz,
                         # trend
                         if (!is.null(trend) && trend != "any") {
                                 good_trend <- if (trend == "increasing") {
-                                        d_ccs >= -1e-12
+                                        .ok(d_ccs >= -1e-12)
                                 } else if (trend == "decreasing") {
-                                        d_ccs <=  1e-12
+                                        .ok(d_ccs <=  1e-12)
                                 } else {
                                         rep(TRUE, length(d_ccs))
                                 }
@@ -556,7 +558,7 @@ build_edges <- function(mz,
                         
                         # tolerance
                         if (ccs_tol > 0) {
-                                good_tol <- abs(d_ccs) <= ccs_tol
+                                good_tol <- .ok(abs(d_ccs) <= ccs_tol)
                         } else {
                                 good_tol <- rep(TRUE, length(d_ccs))
                         }
@@ -618,25 +620,45 @@ build_graph <- function(edges, peaks2keep) {
 }
 
 # ---------------------------------------------------------
-# Optional spline-based RT smoothness filter (R² threshold)
+# Optional spline-based smoothness filter (R² threshold)
 # ---------------------------------------------------------
-apply_shiny_splines <- function(df, R2_min = 0.98, spar = 0.45) {
+apply_shiny_splines <- function(df, R2_min = 0.98, spar = 0.45,
+                                ccs_mode = "rt") {
         if (!"series_id" %in% names(df)) return(df)
         sids <- unique(na.omit(df$series_id))
         if (!length(sids)) return(df)
-        
+
+        dims <- switch(ccs_mode,
+                       rt   = "rt",
+                       ccs  = "ccs",
+                       both = c("rt", "ccs"),
+                       "rt")
+        dims <- dims[dims %in% names(df)]
+        if (!length(dims)) return(df)
+
+        .r2 <- function(x, y) {
+                ok <- is.finite(x) & is.finite(y)
+                if (sum(ok) < 3) return(NA_real_)
+                fit <- try(suppressWarnings(
+                        stats::smooth.spline(x[ok], y[ok], spar = spar)),
+                        silent = TRUE)
+                if (inherits(fit, "try-error")) return(NA_real_)
+                yhat <- stats::predict(fit, x[ok])$y
+                suppressWarnings(stats::cor(y[ok], yhat)^2)
+        }
+
         drop_ids <- integer()
         for (sid in sids) {
                 idx <- which(df$series_id == sid)
                 if (length(idx) < 3) next
-                fit <- try(
-                        suppressWarnings(stats::smooth.spline(df$mz[idx], df$rt[idx], spar = spar)),
-                        silent = TRUE
-                )
-                if (!inherits(fit, "try-error")) {
-                        yhat <- stats::predict(fit, df$mz[idx])$y
-                        R2   <- suppressWarnings(stats::cor(df$rt[idx], yhat)^2)
-                        if (!is.finite(R2) || R2 < R2_min) drop_ids <- c(drop_ids, sid)
+                for (d in dims) {
+                        R2 <- .r2(df$mz[idx], as.numeric(df[[d]][idx]))
+                        # A dimension that cannot be fitted is not evidence
+                        # against the series; only a computed, too-low R2 is.
+                        if (is.finite(R2) && R2 < R2_min) {
+                                drop_ids <- c(drop_ids, sid)
+                                break
+                        }
                 }
         }
         if (length(drop_ids)) df$series_id[df$series_id %in% drop_ids] <- NA_integer_
@@ -644,9 +666,12 @@ apply_shiny_splines <- function(df, R2_min = 0.98, spar = 0.45) {
 }
 
 # ---------------------------------------------------------
-# STRICT RT TREND FILTER (post-hoc, RT only)
-# CCS constraints now enforced in edge construction.
+# STRICT TREND FILTER (post-hoc)
 # ---------------------------------------------------------
+#   ccs_mode = "rt"    -> RT monotonicity only   (CCS ignored)
+#   ccs_mode = "ccs"   -> CCS monotonicity only  (RT ignored; RT may be absent)
+#   ccs_mode = "both"  -> RT and CCS must both be monotonic
+
 strict_rt_filter <- function(df, trend = NULL,
                              ccs_mode = "rt",
                              ccs_tol  = 0) {
@@ -659,43 +684,51 @@ strict_rt_filter <- function(df, trend = NULL,
                 return(df)
         }
         
-        # Enforce monotonicity on the dimension(s) the user actually
-        # selected. 
-        use_rt  <- ccs_mode %in% c("rt", "both")  && "rt"  %in% names(df)
-        use_ccs <- ccs_mode %in% c("ccs", "both") && "ccs" %in% names(df)
-        if (!use_rt && !use_ccs) return(df)
+        dims <- switch(ccs_mode,
+                       rt   = "rt",
+                       ccs  = "ccs",
+                       both = c("rt", "ccs"),
+                       "rt")
+        dims <- dims[dims %in% names(df)]
+        if (!length(dims)) return(df)
         
         sids <- unique(na.omit(df$series_id))
         if (!length(sids)) return(df)
         
-        # walk the series in ascending m/z and drop any
-        # member that breaks the trend relative to the last *kept* member.
-        keep_monotonic <- function(v) {
-                n    <- length(v)
-                keep <- rep(TRUE, n)
-                last <- NA_real_
-                for (i in seq_len(n)) {
-                        vi <- v[i]
-                        if (!is.finite(vi)) { keep[i] <- FALSE; next }
-                        if (is.na(last)) { last <- vi; next }
-                        ok <- if (trend == "increasing") {
-                                vi >= last - 1e-12
-                        } else if (trend == "decreasing") {
-                                vi <= last + 1e-12
-                        } else TRUE
-                        if (ok) last <- vi else keep[i] <- FALSE
-                }
-                keep
-        }
-        
         for (sid in sids) {
                 idx  <- which(df$series_id == sid)
-                comp <- df[idx, ]
-                comp <- comp[order(comp$mz), ]
+                comp <- df[idx, , drop = FALSE]
+                comp <- comp[order(comp$mz), , drop = FALSE]
+                n    <- nrow(comp)
+                if (n < 2L) next
                 
-                keep <- rep(TRUE, nrow(comp))
-                if (use_rt)  keep <- keep & keep_monotonic(comp$rt)
-                if (use_ccs) keep <- keep & keep_monotonic(comp$ccs)
+                vals <- lapply(dims, function(d) as.numeric(comp[[d]]))
+                names(vals) <- dims
+                
+                keep <- rep(TRUE, n)
+                last <- stats::setNames(rep(NA_real_, length(dims)), dims)
+                
+                for (i in seq_len(n)) {
+                        bad <- FALSE
+                        for (d in dims) {
+                                vi <- vals[[d]][i]
+                                if (!is.finite(vi) || !is.finite(last[[d]])) next
+                                ok <- if (trend == "increasing") {
+                                        vi >= last[[d]] - 1e-12
+                                } else if (trend == "decreasing") {
+                                        vi <= last[[d]] + 1e-12
+                                } else TRUE
+                                if (!ok) { bad <- TRUE; break }
+                        }
+                        if (bad) {
+                                keep[i] <- FALSE
+                        } else {
+                                for (d in dims) {
+                                        vi <- vals[[d]][i]
+                                        if (is.finite(vi)) last[[d]] <- vi
+                                }
+                        }
+                }
                 
                 if (any(!keep)) {
                         drop_idx <- comp$series_id.index[!keep]
@@ -705,6 +738,8 @@ strict_rt_filter <- function(df, trend = NULL,
         
         df
 }
+
+
 
 
 ########### MD calculation function #############
@@ -759,6 +794,117 @@ getmdh <- function(mz, cus = c("CH2,H2"), method = "round") {
 }
 
 
+# ---------------------------------------------------------
+# extract_ladders(): one ladder per series, by path extraction
+# ---------------------------------------------------------
+
+extract_ladders <- function(df, edges, unit_mass, min_length = 3,
+                            trend = NULL, ccs_mode = "rt",
+                            md_vals = NULL, method = "round") {
+        if (!"series_id" %in% names(df)) return(df)
+        n <- nrow(df)
+        if (!is.finite(unit_mass) || unit_mass <= 0 || n == 0L) return(df)
+
+        nom    <- .md_nom(unit_mass, method)
+        md_all <- if (!is.null(md_vals) && length(md_vals) == n) as.numeric(md_vals)
+                  else .md_defect(df$mz * nom / unit_mass, method)
+
+        dims <- switch(ccs_mode,
+                       ccs  = intersect("ccs", names(df)),
+                       both = intersect(c("rt", "ccs"), names(df)),
+                       intersect("rt", names(df)))
+        dmat <- if (length(dims))
+                matrix(unlist(lapply(dims, function(d) as.numeric(df[[d]]))),
+                       nrow = n) else NULL
+        use_trend <- !is.null(trend) && trend != "any" && !is.null(dmat)
+
+        ef <- as.integer(edges$from)
+        et <- as.integer(edges$to)
+        new_id <- rep(NA_integer_, n)
+        alt    <- rep(NA_integer_, n)
+        next_id <- 0L
+
+        for (sid in unique(na.omit(df$series_id))) {
+                idx <- which(df$series_id == sid)
+                m   <- length(idx)
+                if (m < min_length) next
+
+                # Local unit-step edges for this component, forward in m/z.
+                pf <- match(ef, idx); pt <- match(et, idx)
+                ok <- !is.na(pf) & !is.na(pt) & pt > pf
+                fa <- pf[ok]; ta <- pt[ok]
+                if (use_trend && length(fa)) {
+                        good <- rep(TRUE, length(fa))
+                        for (dm in seq_len(ncol(dmat))) {
+                                dl <- dmat[idx, dm]
+                                d  <- dl[ta] - dl[fa]
+                                g  <- if (trend == "increasing") d >= -1e-12 else d <= 1e-12
+                                good <- good & !is.na(g) & g
+                        }
+                        fa <- fa[good]; ta <- ta[good]
+                }
+                inc <- lapply(seq_len(m), function(i) fa[ta == i])
+
+                md_l <- md_all[idx]
+                mz_l <- df$mz[idx]
+
+                remaining <- rep(TRUE, m)
+                chains <- list()
+
+                repeat {
+                        if (sum(remaining) < min_length) break
+                        score <- rep(-Inf, m)
+                        prev  <- rep(NA_integer_, m)
+
+                        for (i in which(remaining)) {
+                                src <- inc[[i]]
+                                src <- src[remaining[src] & is.finite(score[src])]
+                                if (length(src)) {
+                                        step <- 10 - 1000 * abs(md_l[i] - md_l[src])
+                                        step[!is.finite(step)] <- -Inf
+                                        k <- which.max(score[src] + step)
+                                        if (is.finite(step[k])) {
+                                                score[i] <- score[src[k]] + step[k]
+                                                prev[i]  <- src[k]
+                                                next
+                                        }
+                                }
+                                score[i] <- 10
+                        }
+                        best <- which.max(score)
+                        if (!is.finite(score[best])) break
+                        path <- integer(0); i <- best
+                        while (!is.na(i)) { path <- c(i, path); i <- prev[i] }
+                        if (length(path) < min_length) break
+
+                        next_id <- next_id + 1L
+                        new_id[idx[path]] <- next_id
+                        remaining[path] <- FALSE
+                        chains[[length(chains) + 1L]] <- list(
+                                id    = next_id,
+                                base  = min(mz_l[path]),
+                                rungs = round((mz_l[path] - min(mz_l[path])) / unit_mass),
+                                md    = stats::median(md_l[path], na.rm = TRUE))
+                }
+
+                un <- which(is.na(new_id[idx]))
+                for (j in un) {
+                        cands <- Filter(function(ch) {
+                                round((mz_l[j] - ch$base) / unit_mass) %in% ch$rungs
+                        }, chains)
+                        if (!length(cands)) next
+                        dd <- vapply(cands, function(ch) abs(md_l[j] - ch$md), numeric(1))
+                        dd[!is.finite(dd)] <- Inf
+                        alt[idx[j]] <- cands[[which.min(dd)]]$id
+                }
+        }
+
+        df$series_id  <- new_id
+        df$series_alt <- alt
+        df
+}
+
+
 ###########  Built-in Homologue series finder  ###########
 find_homologues <- function(
                 df,
@@ -771,7 +917,9 @@ find_homologues <- function(
                 R2_min     = 0.98,
                 verbose    = FALSE,
                 ccs_mode   = "rt",   # "rt", "ccs", or "both"
-                ccs_tol    = 0       # per-step CCS tolerance
+                ccs_tol    = 0,      # per-step CCS tolerance
+                md_col     = NULL,   # existing MD column for this same unit
+                method     = "round" # rounding mode used for that MD column
 ) {
         # Map rt_trend -> internal 'trend'
         trend <- if (!is.null(rt_trend) && rt_trend != "none") rt_trend else NULL
@@ -833,7 +981,8 @@ find_homologues <- function(
         
         if (is.null(nodes_with_series) || nrow(nodes_with_series) == 0) {
                 out <- df_orig
-                out$series_id <- NA_integer_
+                out$series_id  <- NA_integer_
+                out$series_alt <- NA_integer_
                 if (verbose) message("No components detected; returning NA series_id for all peaks.")
                 return(out)
         }
@@ -842,8 +991,16 @@ find_homologues <- function(
                 match(seq_len(nrow(df)), as.numeric(nodes_with_series$index))
         ]
         df$series_id.index <- seq_len(nrow(df))
+        df$series_alt <- NA_integer_
         
-        # Apply strict RT trend filter (RT only; CCS already used in edges)
+        df <- extract_ladders(df, edges = edges, unit_mass = ls_unit$mass,
+                              min_length = min_length, trend = trend,
+                              ccs_mode = ccs_mode,
+                              md_vals = if (!is.null(md_col) && md_col %in% names(df))
+                                              df[[md_col]] else NULL,
+                              method = method)
+        
+        # Apply strict trend filter on the selected dimension(s)
         df <- strict_rt_filter(
                 df,
                 trend     = trend,
@@ -853,26 +1010,37 @@ find_homologues <- function(
         
         # Keep only sufficiently long series
         counts   <- table(df$series_id)
-        good_ids <- names(counts[counts >= min_length & names(counts) != "NA"])
-        df <- df[df$series_id %in% good_ids, , drop = FALSE]
+        good_ids <- as.numeric(names(counts[counts >= min_length & names(counts) != "NA"]))
+        drop_sid <- !is.na(df$series_id) & !(df$series_id %in% good_ids)
+        df$series_id[drop_sid] <- NA_integer_
+        # An alternate of a series that no longer exists is not an alternate.
+        df$series_alt[!is.na(df$series_alt) & !(df$series_alt %in% good_ids)] <- NA_integer_
         
-        if (nrow(df) == 0) {
+        if (!any(!is.na(df$series_id))) {
                 if (verbose) message("No series found after min_length filtering")
                 out <- df_orig
-                out$series_id <- NA_integer_
+                out$series_id  <- NA_integer_
+                out$series_alt <- NA_integer_
                 return(out)
         }
         
-        # Optional RT spline smoothness filter
+        # Optional spline smoothness filter
         if (!is.null(trend) && !is.null(R2_min) && R2_min > 0) {
-                df <- apply_shiny_splines(df, R2_min = R2_min)
+                df <- apply_shiny_splines(df, R2_min = R2_min, ccs_mode = ccs_mode)
+                still <- unique(na.omit(df$series_id))
+                df$series_alt[!is.na(df$series_alt) & !(df$series_alt %in% still)] <- NA_integer_
         }
         
-        # Normalize series IDs
-        df$series_id <- as.numeric(factor(df$series_id))
-        df <- df[!is.na(df$series_id), , drop = FALSE]
-        df$series_id <- as.numeric(factor(df$series_id))
+        # Normalise series IDs, keeping series_alt consistent with them.
+        keep_ids <- sort(unique(na.omit(df$series_id)))
+        if (length(keep_ids)) {
+                remap <- stats::setNames(seq_along(keep_ids), as.character(keep_ids))
+                df$series_id  <- unname(remap[as.character(df$series_id)])
+                df$series_alt <- unname(remap[as.character(df$series_alt)])
+        } else {
+                df$series_id  <- NA_integer_
+                df$series_alt <- NA_integer_
+        }
         
         df
 }
-

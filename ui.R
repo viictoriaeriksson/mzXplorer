@@ -19,7 +19,7 @@
   .mzx-plot    { background-color: #eef7ff; border-left-color: #1f77b4; }
   /* Homologue search (purple) */
   .mzx-homol   { background-color: #f5efff; border-left-color: #7b3fbf; }
-  /* MD / m/z differences (orange) */
+  /* Mass-Shift Screening (orange) */
   .mzx-mdiff   { background-color: #fff5e6; border-left-color: #e07b00; }
   /* ISF (teal) */
   .mzx-isf     { background-color: #e7f6f5; border-left-color: #2c8a86; }
