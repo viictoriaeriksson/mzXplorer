@@ -629,8 +629,7 @@ mass_defect_server <- function(id) {
                       detail = sprintf("Unit %d/%d: %s", i, length(units), u))
 
           # If this repeating unit is also the first-order base unit of one of
-          # the MD formulas, the mass defect has already been computed and is
-          # on screen as Formula1_MD1 / Formula2_MD1. Reuse it so the value
+          # the MD formulas. Use it so the value
           # driving the series split is identical to the plotted one.
           .first_unit <- function(s) {
             if (is.null(s) || !nzchar(s)) return(NA_character_)
@@ -1093,8 +1092,8 @@ mass_defect_server <- function(id) {
       }
 
       role <- rep("unlinked", nrow(df))
-      role[unique(to_all)]   <- "partner"
-      role[unique(from_all)] <- "source"   # source wins if both
+      role[unique(from_all)] <- "precursor"
+      role[unique(to_all)]   <- "product"  
 
       list(df = df, diff_cols = diff_cols,
            from_idx = from_all, to_idx = to_all, role = role)
@@ -1127,8 +1126,8 @@ mass_defect_server <- function(id) {
       se_df  <- df[is_sel, , drop = FALSE]
 
 
-      d_prod <- df[nd$role == "source" & !is_sel, , drop = FALSE]
-      d_prec <- df[nd$role != "source" & !is_sel, , drop = FALSE]
+      d_prod <- df[nd$role == "product" & !is_sel, , drop = FALSE]
+      d_prec <- df[nd$role != "product" & !is_sel, , drop = FALSE]
 
       p <- plot_ly(source = src_id)
       if (length(lx)) {
@@ -1631,5 +1630,6 @@ make_mdplot <- function(shared_data, xvar, yvar, xlabel, ylabel, intensity_enabl
     mzx_style(xtitle = xlabel, ytitle = ylabel, legend = show_legend) %>%
     plotly::layout(dragmode = "select")
 }
+
 
 

@@ -65,7 +65,7 @@ isf_ui <- function(id) {
                                          width = "100%"))
                 ),
                 tags$small(style = "color:#777;",
-                           "Cancel halts before the next processing phase (the heavy fragment match cannot be interrupted mid-run)."),
+                           "Cancel halts before the next processing phase."),
                 tags$br(), tags$br(),
                 checkboxInput(ns('ins'), 'Show intensity as size', FALSE),
                 checkboxInput(ns('show_leg'), 'Show plot legends', TRUE),
@@ -121,6 +121,7 @@ isf_ui <- function(id) {
                 column(width = 6, plotly::plotlyOutput(ns("ISFPlot2")))
               ),
               div(style = "margin-top:10px;",
+                uiOutput(ns("table_only_sel_ui")),
                 DT::DTOutput(ns("table_selected")),
                 fluidRow(style = "margin-top:6px;",
                   column(6, checkboxInput(ns("cleanup_isf_export"),
@@ -477,11 +478,7 @@ isf_server <- function(id) {
         fluidRow(
           column(6, selectInput(ns('filter_col'),
                                 'Filter by sample (select sample column). Filter applies to network plot as well.',
-                                choices = c("(none)", nms), selected = "(none)")),
-          column(6, tags$div(style = "margin-top:28px;",
-                             checkboxInput(ns("table_only_selected"),
-                                           "Show only selected points in table",
-                                           value = FALSE)))
+                                choices = c("(none)", nms), selected = "(none)"))
         ),
         fluidRow(
           column(3, selectInput(ns('x1'), 'X Plot 1', choices = nms, selected = pick("mz", 1))),
@@ -653,6 +650,15 @@ isf_server <- function(id) {
         plot_sel_snapshot(list(keys = sel_keys_rv(), src = sel_source()))
       }
     }, ignoreNULL = FALSE, ignoreInit = TRUE)
+
+    # Sits directly above the table, on its own line (same as Mass Defect).
+    output$table_only_sel_ui <- renderUI({
+      req(vals$df_filtered)
+      tags$div(style = "margin-top:14px; margin-bottom:10px;",
+               checkboxInput(ns("table_only_selected"),
+                             "Show only selected points in table",
+                             value = isTRUE(input$table_only_selected)))
+    })
 
     output$table_selected <- DT::renderDT({
       req(vals$df_filtered)
