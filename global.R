@@ -16,12 +16,14 @@ library(igraph)
 library(bslib)
 library(data.table)
 library(shinyjs)
+library(markdown)
 if (requireNamespace("readxl", quietly = TRUE)) {
   suppressPackageStartupMessages(library(readxl))
 }
 
+
 # 2. Options
-# Allow uploading large MS2 files (MGF / MSP can easily exceed 200 MB).
+# Allow uploading large MS2 files (MGF / MSP can easily exceed 200 MB).  
 # The setting is per-session; users can override via the MZX_MAX_UPLOAD_GB
 # environment variable if they need even bigger files.
 .max_gb <- suppressWarnings(as.numeric(Sys.getenv("MZX_MAX_UPLOAD_GB", "4")))
