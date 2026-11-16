@@ -678,6 +678,18 @@ mass_defect_server <- function(id) {
           sid_offset <- max(m_full$series_id, na.rm = TRUE)
         }
 
+        # A later unit can lose members that an earlier unit already claimed, which
+        # can leave a fragment of one or two features. Keep only series that still
+        # reach the minimum length on the features actually assigned.
+        min_len_now <- as.integer(input$homol_minlen)
+        tab_sid <- table(m_full$series_id)
+        too_small <- as.numeric(names(tab_sid)[tab_sid < min_len_now])
+        if (length(too_small)) {
+          m_full$series_id[m_full$series_id %in% too_small]    <- NA_integer_
+          m_full$series_unit[is.na(m_full$series_id)]          <- NA_character_
+          m_full$series_alt[m_full$series_alt %in% too_small]  <- NA_integer_
+        }
+
         incProgress(0.2, detail = "Finalising...")
 
         vals$m <- data.table::as.data.table(m_full)

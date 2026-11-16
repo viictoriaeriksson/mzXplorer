@@ -792,142 +792,38 @@ getmdh <- function(mz, cus = c("CH2,H2"), method = "round") {
 
 
 # ---------------------------------------------------------
-# extract_ladders(): one ladder per series, by path extraction
+# resolve_close_members(): close m/z conflicts inside a series
 # ---------------------------------------------------------
-
-extract_ladders <- function(df, edges, unit_mass, min_length = 3,
-                            trend = NULL, ccs_mode = "rt",
-                            md_vals = NULL, method = "round", ppm = 5) {
+resolve_close_members <- function(df, unit_mass, ppm = 5, md_vals = NULL,
+                                  method = "round") {
         if (!"series_id" %in% names(df)) return(df)
-        n <- nrow(df)
-        if (!is.finite(unit_mass) || unit_mass <= 0 || n == 0L) return(df)
-
-        nom    <- .md_nom(unit_mass, method)
+        if (!"series_alt" %in% names(df)) df$series_alt <- NA_integer_
+        if (!is.finite(unit_mass) || unit_mass <= 0) return(df)
+        n   <- nrow(df)
+        nom <- .md_nom(unit_mass, method)
         md_all <- if (!is.null(md_vals) && length(md_vals) == n) as.numeric(md_vals)
                   else .md_defect(df$mz * nom / unit_mass, method)
-
-        dims <- switch(ccs_mode,
-                       ccs  = intersect("ccs", names(df)),
-                       both = intersect(c("rt", "ccs"), names(df)),
-                       intersect("rt", names(df)))
-        dmat <- if (length(dims))
-                matrix(unlist(lapply(dims, function(d) as.numeric(df[[d]]))),
-                       nrow = n) else NULL
-        use_trend <- !is.null(trend) && trend != "any" && !is.null(dmat)
-        trend_keeps <- function(S, idx_local) {
-                if (!use_trend) return(TRUE)
-                S <- S[order(mz_l[S])]
-                for (dm in seq_len(ncol(dmat))) {
-                        dv <- diff(dmat[idx[S], dm])
-                        dv <- dv[!is.na(dv)]
-                        bad <- if (trend == "increasing") dv < -1e-12 else dv > 1e-12
-                        if (any(bad)) return(FALSE)
-                }
-                TRUE
-        }
-
-        ef <- as.integer(edges$from)
-        et <- as.integer(edges$to)
-        new_id <- rep(NA_integer_, n)
-        alt    <- rep(NA_integer_, n)
-        next_id <- 0L
+        conflict_da <- 0.5 * unit_mass
 
         for (sid in unique(na.omit(df$series_id))) {
                 idx <- which(df$series_id == sid)
-                m   <- length(idx)
-                if (m < min_length) next
-
-                # Local unit-step edges for this component, forward in m/z.
-                pf <- match(ef, idx); pt <- match(et, idx)
-                ok <- !is.na(pf) & !is.na(pt) & pt > pf
-                fa <- pf[ok]; ta <- pt[ok]
-                if (use_trend && length(fa)) {
-                        good <- rep(TRUE, length(fa))
-                        for (dm in seq_len(ncol(dmat))) {
-                                dl <- dmat[idx, dm]
-                                d  <- dl[ta] - dl[fa]
-                                g  <- if (trend == "increasing") d >= -1e-12 else d <= 1e-12
-                                good <- good & !is.na(g) & g
-                        }
-                        fa <- fa[good]; ta <- ta[good]
-                }
-                inc <- lapply(seq_len(m), function(i) fa[ta == i])
-
-                md_l <- md_all[idx]
-                mz_l <- df$mz[idx]
-                md_tol <- ppm * 1e-6 * stats::median(mz_l) * nom / unit_mass   # MD tolerance from ppm
-
-                remaining <- rep(TRUE, m)
-                chains <- list()
-
-                repeat {
-                        if (sum(remaining) < min_length) break
-                        score <- rep(-Inf, m)
-                        prev  <- rep(NA_integer_, m)
-
-                        for (i in which(remaining)) {
-                                src <- inc[[i]]
-                                src <- src[remaining[src] & is.finite(score[src])]
-                                if (length(src)) {
-                                        step <- 10 - 5 * (abs(md_l[i] - md_l[src]) > md_tol) - 1e-3 * abs(md_l[i] - md_l[src])
-                                        step[!is.finite(step)] <- -Inf
-                                        k <- which.max(score[src] + step)
-                                        if (is.finite(step[k])) {
-                                                score[i] <- score[src[k]] + step[k]
-                                                prev[i]  <- src[k]
-                                                next
-                                        }
-                                }
-                                score[i] <- 10
-                        }
-                        best <- which.max(score)
-                        if (!is.finite(score[best])) break
-                        path <- integer(0); i <- best
-                        while (!is.na(i)) { path <- c(i, path); i <- prev[i] }
-                        if (length(path) < min_length) break
-
-                        next_id <- next_id + 1L
-                        new_id[idx[path]] <- next_id
-                        remaining[path] <- FALSE
-                        chains[[length(chains) + 1L]] <- list(
-                                id    = next_id,
-                                base  = min(mz_l[path]),
-                                rungs = round((mz_l[path] - min(mz_l[path])) / unit_mass),
-                                mz    = mz_l[path],
-                                loc   = path,
-                                md    = mean(md_l[path], na.rm = TRUE))
-                }
-
-                un <- which(is.na(new_id[idx]))
-                for (j in un) {
-                        # Near-duplicate of a ladder member: within the search's ppm
-                        # accuracy of that member. Only then is the pair compared.
-                        hit <- which(vapply(chains, function(ch)
-                                any(abs(ch$mz - mz_l[j]) <= ppm * 1e-6 * ch$mz), logical(1)))
-                        if (!length(hit)) next
-                        ci  <- hit[which.min(vapply(chains[hit], function(ch)
-                                abs(ch$md - md_l[j]), numeric(1)))]
-                        ch  <- chains[[ci]]
-                        # Series mean MD and the member this feature competes with.
-                        ref <- mean(md_l[ch$loc], na.rm = TRUE)
-                        k   <- ch$loc[which.min(abs(mz_l[ch$loc] - mz_l[j]))]
-                        if (is.finite(ref) && is.finite(md_l[j]) && is.finite(md_l[k]) &&
-                            abs(md_l[j] - ref) < abs(md_l[k] - ref) &&                            trend_keeps(c(setdiff(ch$loc, k), j))) {
-                                # The new feature sits closer to the series mean: it takes the
-                                # place of the member, and the member becomes the excluded one.
-                                new_id[idx[k]] <- NA_integer_
-                                alt[idx[k]]    <- ch$id
-                                new_id[idx[j]] <- ch$id
-                                alt[idx[j]]    <- NA_integer_
-                                chains[[ci]]$loc[chains[[ci]]$loc == k] <- j
-                        } else {
-                                alt[idx[j]] <- ch$id
-                        }
+                if (length(idx) < 2L) next
+                idx <- idx[order(df$mz[idx])]
+                mz  <- df$mz[idx]
+                ref <- mean(md_all[idx], na.rm = TRUE)
+                # consecutive members closer than half a unit share a conflict group
+                grp <- cumsum(c(1L, diff(mz) >= conflict_da))
+                for (g in unique(grp)) {
+                        mem <- idx[grp == g]
+                        if (length(mem) < 2L) next
+                        dev <- abs(md_all[mem] - ref)
+                        dev[!is.finite(dev)] <- Inf
+                        keep <- mem[which.min(dev)]
+                        drop <- setdiff(mem, keep)
+                        df$series_alt[drop] <- sid
+                        df$series_id[drop]  <- NA_integer_
                 }
         }
-
-        df$series_id  <- new_id
-        df$series_alt <- alt
         df
 }
 
@@ -1020,20 +916,15 @@ find_homologues <- function(
         df$series_id.index <- seq_len(nrow(df))
         df$series_alt <- NA_integer_
         
-        df <- extract_ladders(df, edges = edges, unit_mass = ls_unit$mass,
-                              min_length = min_length, trend = trend,
-                              ccs_mode = ccs_mode,
-                              md_vals = if (!is.null(md_col) && md_col %in% names(df))
-                                              df[[md_col]] else NULL,
-                              method = method, ppm = ppm)
-        
-        # Apply strict trend filter on the selected dimension(s)
-        df <- strict_rt_filter(
-                df,
-                trend     = trend,
-                ccs_mode  = ccs_mode,
-                ccs_tol   = ccs_tol
-        )
+        # Trend filter (instruction step 5): drop members that break the RT / CCS trend.
+        df <- strict_rt_filter(df, trend = trend, ccs_mode = ccs_mode, ccs_tol = ccs_tol)
+
+        # Close m/z conflicts: keep the member closest to the series mean MD; the
+        # others become open circles (excluded from counts).
+        df <- resolve_close_members(df, unit_mass = ls_unit$mass, ppm = ppm,
+                                    md_vals = if (!is.null(md_col) && md_col %in% names(df))
+                                                  df[[md_col]] else NULL,
+                                    method = method)
         
         # Keep only sufficiently long series
         counts   <- table(df$series_id)
