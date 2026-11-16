@@ -34,7 +34,7 @@ Names must follow standard R variable rules (letters, digits, `_`, `.`).
 #### 1.1.1 Optional columns
 
 Any additional columns are allowed and become available for plotting,
-filtering, homologue summary and export. Examples: `ccs`, `class`,
+filtering, and export. Examples: `ccs`, `class`,
 `group`, `chemical_formula`, `sample_id`, `feature_id`, per‑sample
 intensity columns (`sample_1`, `sample_2`, …).
 
@@ -42,7 +42,7 @@ intensity columns (`sample_1`, `sample_2`, …).
 
 After a feature file is uploaded, the **Column mapping** section lets you
 assign the file's actual column names to the roles mzXplorer expects
-(`mz`, `rt`, `intensity`, and optionally `ccs` and `id`). Reasonable
+(`mz`, `rt`, `intensity`, and optionally `CCS`, `ID`, and `Chemical Formula`). Reasonable
 defaults are guessed automatically — just confirm and press **Process**.
 
 
@@ -77,19 +77,17 @@ comparing samples.
 | `round`    | standard rounding to the nearest integer (default)   |
 | `ceiling`  | always round up to the next integer                  |
 | `floor`    | always round down to the previous integer            |
-The same mode is applied consistently to MD1, MD2, and MD3.
+The same mode is applied to MD1. For MD2, and MD3, ceiling is used.
 
-\
 After clicking **Process** it computes:  
 -   **OMD** – original mass defect
 -   **RMD** – relative mass defect
--   **MD1 (MD2**, **MD3)** – user input mass defects\
-  All appear in axis selectors for the interactive plots.
+-   **MD1 (MD2**, **MD3)** – user input mass defects
   
 3.  Choose plot ranges (intensity, mz, rt) and click **Plot**. 
     **Two synchronized scatter plots** appear using Plotly.
-4.  Optional sections below are toggled by checkboxes in the sidebar:
-    *Homologue search*, *MD / m/z differences calculation*, *Sample comparison*.
+4.  Optional sections below are found in separate subtabs:
+    *Homologue search*, *Molecular composition*, *MD / m/z differences calculation*, *Sample comparison*.
 
 ### 2.2 Interactive plots
 
@@ -100,18 +98,25 @@ After clicking **Process** it computes:
     (crosstalk‑linked).
 -   Selection drives the **selected‑data table**, the **barplot**, the
     **MD/mz difference table**, and the **sample comparison plot**.
+-   **Show only selected points in table** (checkbox above the plots, next
+    to the sample filter) controls how the selection affects the table.
+    Unticked (default) the full table stays visible and the selected rows
+    are merely highlighted; ticked, the table is narrowed to the current
+    selection. The same checkbox is available on the ISF tab.
 -   Use the **Reset selection** button on the tab to clear all linked
     selections and re‑render the plots.
 
 ### 2.3 Filters
 
-Three automatically‑generated filters:
+Tick **Filters** in the sidebar to reveal three automatically‑generated
+range filters:
 
 -   intensity range
 -   m/z range
 -   retention time (rt) range
 
-Filtering affects plots, homologue detection, the summary table, and
+The checkbox is unticked by default and no filtering is applied while it is
+hidden. Filtering affects plots, homologue detection, the summary table, and
 exported data. Click **Plot** to apply.
 
 ### 2.4 Homologue search *(optional)*
@@ -154,10 +159,9 @@ section.
 6.  **Length filter.** Series shorter than **Minimum length** are
     discarded; the rest are renumbered.
 
-Because a step of the unit in m/z corresponds to a fixed shift in
-Kendrick mass, the resulting series are exactly the features that
-would fall on the same horizontal line in a Kendrick mass‑defect plot
-for the same base unit.
+Because a step of the unit in m/z corresponds to a fixed shift in Kendrick mass,
+the resulting series are exactly the features that would fall on the same horizontal line
+in a Kendrick mass‑defect plot for the same base unit.
 _____________________________________________________________________
 
 ##### CCS‑Aware Monotonicity
@@ -208,22 +212,30 @@ Clicking one or more rows in the homologue table:
 
 Use **Clear series selection** to return to plot‑based selection.
 
+### 2.5 Molecular Composition *(optional)*
 
-### 2.5 MD / m/z differences *(optional)*
+Enables **Molecular Composition** analysis by calculation of Double Bond Equivalent (DBE) and
+ratios of H/C and O/C from chemical formulas. The results are presented as two interactive plots, 
+one for DBE (DBE = C − H/2 + N/2 − X/2 + 1 (X = F+Cl+Br+I)) and one for H/C (or F/C, Br/C, Cl/C) and O/C (Van Krevelen). Requires the feature list file to 
+contain chemical formulas information.
 
-Enable **Calculate Mass Defect Differences** to enter comma‑separated MD
+
+
+### 2.6 Mass-shift Screening *(optional)*
+
+Enables calculation of **MD / m/z differences** by entering comma‑separated MD
 (mDa) and m/z (Da) pairs plus an m/z tolerance. Click **Calculate MD/mz
 Differences** to add `Δ → id` columns to the feature table and build a
 difference **network plot**.
 
--   Network plot display features matching the selected MD and mz difference.
+-   Network plot display features matching the selected MD and mz difference as OMD vs mz and OMD vz Rt.
 -   The results table is **filtered by the network plot's selection**
     (lasso/box). Clear the selection to see all features.
 
-### 2.6 Sample comparison *(optional)*
+### 2.7 Sample comparison *(optional)*
 
-Enable **Enable sample comparison** to be able to compare selected features (from other plots) accross different samples.
-Choose the number of samples and selected the samples intesnity columns.
+Enables **sample comparison** to be able to compare selected features (from other plots) across different samples.
+Choose the number of samples and selected the samples intensity columns.
 Plot types: **Grouped bars** or **Lines + markers**.
 
 -   Plot is drawn on **Plot sample comparison**; settings apply on
@@ -234,7 +246,7 @@ Plot types: **Grouped bars** or **Lines + markers**.
 -   Legend format:
     `id=… | mz=… | rt=… | intensity=…`.
 
-### 2.7 Selection logic
+### 2.8 Selection logic
 
 The MD tab uses **unified selection priority**, backed by a
 `reactiveVal` + generation counter so **Reset selection**  clears
@@ -248,46 +260,54 @@ all linked plots and tables.
     comparison.
     
 
-### 2.8 Export
+### 2.9 Export
 
 **Export Data** downloads selected rows if any exist, otherwise the full
 filtered dataset. Includes all MD variables, homologue IDs, and CCS
 values if present.
 
-### 2.9 Mass Defect Equations
+### 2.10 Mass Defect Equations
 
 In all equations below, $\text{nom}(\cdot)$ denotes the **nominal-mass operator** and can be chosen as `round`, `ceiling`, or `floor`:
 
 
-The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown below.
+Every mass defect is defined as **value minus its nominal value**, i.e. $x - \text{nom}(x)$.
 
-<p><b>OMD</b> — original mass defect</p>
+<p><b>OMD</b> — original mass defect [mDa]</p>
 
-<p>$$ \text{OMD (mDa)} = (\text{round}(m) - m) \times 10^{3} $$</p>
+<p>$$ \text{OMD (mDa)} = (m - \text{round}(m)) \times 10^{3} $$</p>
 
-<p>(The OMD column is reported in milli‑Daltons — i.e. the raw mass defect is multiplied by $10^{3}$ and then rounded to the nearest integer using round‑half‑away‑from‑zero.)</p>
+<p><b>RMD</b> - relative mass defect [ppm]</p>
 
-<p><b>RMD</b> — relative mass defect</p>
-
-<p>$$ \text{RMD (ppm)} = \frac{\text{round}(m) - m}{m} \times 10^{6} $$</p>
+<p>$$ \text{RMD (ppm)} = \frac{m - \text{round}(m)}{m} \times 10^{6} $$</p>
 
 <p><b>MD1</b> — first‑order MD with unit $u_1$</p>
 
-<p>$$ m_1 = m \times \frac{\text{round}(u_1)}{u_1} $$</p>
+<p>$$ m_1 = m \times \frac{\text{nom}(u_1)}{u_1} $$</p>
 
-<p>$$ \text{MD1} = \text{nom}(m_1) - m_1 $$</p>
+<p>$$ \text{MD1} = m_1 - \text{nom}(m_1) $$</p>
+
+<p>MD1 uses the rounding mode selected in the sidebar, for both the scaling
+factor and the defect itself.</p>
 
 <p><b>MD2</b> — second‑order MD with unit $u_2$</p>
 
 <p>$$ m_2 = \frac{\text{MD1}(m)}{\text{MD1}(u_2)} $$</p>
 
-<p>$$ \text{MD2} = \text{nom}(m_2) - m_2 $$</p>
+<p>$$ \text{MD2} = m_2 - \text{ceil}(m_2) $$</p>
 
 <p><b>MD3</b> — third‑order MD with unit $u_3$</p>
 
 <p>$$ m_3 = \frac{\text{MD2}(m)}{\text{MD2}(u_3)} $$</p>
 
-<p>$$ \text{MD3} = \text{nom}(m_3) - m_3 $$</p>
+<p>$$ \text{MD3} = m_3 - \text{ceil}(m_3) $$</p>
+
+<p><b>Rounding mode and MD order.</b> The selected rounding mode applies to
+the <b>first order only</b>. Second- and third-order mass defects always use
+$\text{ceil}(\cdot)$, following Roach, Laskin &amp; Laskin (2011)
+<i>Anal. Chem.</i> <b>83</b>, 4924–4929. Changing the rounding mode therefore
+alters MD2 and MD3 only indirectly, through the MD1 values they are
+derived from.</p>
 
 **Examples of the MD‑formula input box**
 
@@ -302,7 +322,7 @@ The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown 
 -   `CH2/X` — **fractional base unit** with divisor `X`. Not combinable
     with subtraction. Example: `CH2/10`.
 
-### 2.10 Tips
+### 2.11 Tips
 
 -   **LC/GC‑HRMS**: RT trend = *increasing*; enable *Both (RT + CCS)*;
     spline R² \> 0.95 for a stricter monotonic trend.
@@ -312,6 +332,7 @@ The same operator is applied to every occurrence of $\text{round}(\cdot)$ shown 
 -   **Direct infusion**: RT trend = *any*; spline R² = 0.
 -   Start with a wide **MD/mz difference tolerance** and tighten once
     you see which pairs actually link.
+
 
 </div>
 
@@ -401,7 +422,7 @@ Columns:
     table with all original columns plus every new ISF / NL / adduct
     column, respecting manual re‑tags.
     
-### 3.7 Neutral‑loss and adduct annotation
+### 3.5 Neutral‑loss and adduct annotation
 
 **Neutral losses**: select any subset of the preset losses (H₂O
 18.0106, NH₃ 17.0265, CO₂ 43.9898, SO₃ 79.9568, HCl 35.9767, HF
@@ -436,7 +457,7 @@ adduct, its `ISF_annotation`, `ISF_NL_annotation` and all associated
 
 ### 3.6 Sample comparison *(optional)*
 
-Similar to the MD tab. Enable **Enable sample comparison** to be able to compare selected features (from other plots) across different samples.
+Similar to the MD tab. Enables **sample comparison** to be able to compare selected features (from other plots) across different samples.
 Choose the number of samples and selected the samples intesnity columns.
 Plot types: **Grouped bars** or **Lines + markers**.
 -   Plot is drawn on **Plot sample comparison**; settings apply on
