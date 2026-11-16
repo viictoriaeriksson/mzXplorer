@@ -2,8 +2,7 @@
 # mzXplorer: UI entry point
 # =========================================================
 
-# Section palette (kept in one place so sidebar panels and main-panel
-# backgrounds stay in sync). Each entry: (background, border/accent).
+# Section palette. Each entry: (background, border/accent).
 .mzx_section_css <- HTML("
   /* Common section wrapper */
   .mzx-section {
@@ -20,7 +19,7 @@
   .mzx-plot    { background-color: #eef7ff; border-left-color: #1f77b4; }
   /* Homologue search (purple) */
   .mzx-homol   { background-color: #f5efff; border-left-color: #7b3fbf; }
-  /* MD / m/z differences (orange) */
+  /* Mass-Shift Screening (orange) */
   .mzx-mdiff   { background-color: #fff5e6; border-left-color: #e07b00; }
   /* ISF (teal) */
   .mzx-isf     { background-color: #e7f6f5; border-left-color: #2c8a86; }
@@ -28,6 +27,8 @@
   .mzx-sample  { background-color: #eafbe7; border-left-color: #2e8b57; }
   /* Export / full table (soft yellow) */
   .mzx-export  { background-color: #fffbe6; border-left-color: #c9a227; }
+  /* Molecular composition (pink / rose) */
+  .mzx-molcomp { background-color: #fbeaf2; border-left-color: #b8377a; }
 
   /* --- Tab-pane variants (mainPanel subtabs) ---
      Mirrors the .mzx-section palette for tab content panes.
@@ -46,6 +47,7 @@
   .mzx-pane.mzx-isf     { background-color: #e7f6f5; border-left-color: #2c8a86; }
   .mzx-pane.mzx-sample  { background-color: #eafbe7; border-left-color: #2e8b57; }
   .mzx-pane.mzx-export  { background-color: #fffbe6; border-left-color: #c9a227; }
+  .mzx-pane.mzx-molcomp { background-color: #fbeaf2; border-left-color: #b8377a; }
 
   /* DataTables & plotly overrides inside tab panes */
   .mzx-pane .dataTables_wrapper { background: transparent; }
@@ -90,10 +92,7 @@
   .navbar { border-bottom: 3px solid #1f77b4; }
 ")
 
-# Lightweight tooltip helper: when the user hovers a selectize dropdown
-# option, copy its text into the `title` attribute so the full name
-# shows as a native tooltip. Uses event delegation on a single mouseover
-# listener — no MutationObserver, no repeated document-wide scans.
+# Tooltip helper
 mzx_selectize_titles_js <- tags$script(HTML("
 $(document).on('mouseover', '.selectize-dropdown-content .option', function(){
   if (!this.hasAttribute('title')) this.setAttribute('title', this.textContent);
@@ -134,8 +133,6 @@ ui <- navbarPage(
     "Instructions",
     fluidPage(
             shiny::br(),
-            # MathJax config must be injected BEFORE MathJax.js loads,
-            # so that $...$ / $$...$$ are accepted as math delimiters.
             tags$head(
               tags$script(type = "text/x-mathjax-config", HTML(
                 "MathJax.Hub.Config({
